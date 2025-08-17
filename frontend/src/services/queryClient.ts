@@ -1,5 +1,12 @@
 import { QueryClient } from '@tanstack/react-query';
-import { ApiError } from './types';
+
+interface ApiError {
+  message: string;
+  status?: number;
+  statusText?: string;
+  correlationId?: string;
+  details?: unknown;
+}
 
 export const queryClient = new QueryClient({
   defaultOptions: {

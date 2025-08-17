@@ -312,11 +312,14 @@ class VaultService:
         # Generate embeddings
         embeddings = await self.embedding_service.encode_texts(documents)
         
+        # Sanitize metadata to ensure ChromaDB compatibility
+        sanitized_metadatas = self._sanitize_metadatas(metadatas)
+        
         # Store in ChromaDB
         collection.add(
             documents=documents,
             embeddings=embeddings,
-            metadatas=metadatas,
+            metadatas=sanitized_metadatas,
             ids=ids
         )
     
@@ -491,6 +494,40 @@ class VaultService:
             'service_status': 'healthy' if db_health['status'] == 'healthy' and embed_health['status'] == 'healthy' else 'unhealthy'
         }
     
+    def _sanitize_metadatas(self, metadatas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Sanitize metadata to ensure ChromaDB compatibility.
+        
+        ChromaDB only accepts str, int, float, bool, or None as metadata values.
+        Lists and other complex types need to be converted.
+        """
+        sanitized = []
+        
+        for metadata in metadatas:
+            sanitized_metadata = {}
+            
+            for key, value in metadata.items():
+                if value is None or isinstance(value, (str, int, float, bool)):
+                    # Already compatible types
+                    sanitized_metadata[key] = value
+                elif isinstance(value, list):
+                    # Convert lists to comma-separated strings
+                    if all(isinstance(item, (str, int, float, bool)) for item in value):
+                        sanitized_metadata[key] = ", ".join(map(str, value))
+                    else:
+                        # Skip complex list items
+                        sanitized_metadata[key] = f"list_{len(value)}_items"
+                elif isinstance(value, dict):
+                    # Convert dicts to strings (simplified representation)
+                    sanitized_metadata[key] = f"dict_{len(value)}_keys"
+                else:
+                    # Convert other types to string
+                    sanitized_metadata[key] = str(value)
+            
+            sanitized.append(sanitized_metadata)
+        
+        return sanitized
+
     def _validate_vault_inputs(self, vault_name: str, vault_path: str) -> None:
         """Validate vault inputs."""
         if not vault_name or not isinstance(vault_name, str):

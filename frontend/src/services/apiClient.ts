@@ -1,19 +1,139 @@
-import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
-import { 
-  APIResponse, 
-  VaultConfig, 
-  SearchParams, 
-  SearchResult, 
-  IndexingJob 
-} from '@/types';
-import { 
-  ApiClient, 
-  ApiError, 
-  RequestConfig, 
-  ResponseData, 
-  HealthStatus,
-  SystemStatus 
-} from './types';
+import axios from 'axios';
+import type { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+// Define interfaces locally to avoid import issues
+interface APIResponse<T = unknown> {
+  status: 'success' | 'error';
+  data: T;
+  message?: string;
+  request_id: string;
+}
+
+interface VaultConfig {
+  vault_name: string;
+  vault_path: string;
+  description?: string;
+  schedule?: {
+    enabled: boolean;
+    frequency: 'manual' | 'hourly' | 'daily' | 'weekly' | 'custom';
+    time?: string;
+    interval?: number;
+    timezone?: string;
+    days_of_week?: number[];
+    cron_expression?: string;
+  };
+  advanced?: {
+    chunk_size: number;
+    chunk_overlap: number;
+    embedding_model: string;
+    ignore_patterns: string[];
+    file_types: string[];
+    max_file_size_mb: number;
+    parallel_processing?: boolean;
+    batch_size?: number;
+    custom_metadata?: Record<string, unknown>;
+  };
+  force_reindex?: boolean;
+}
+
+// Backend API format (matches Python Pydantic model)
+interface IndexVaultRequest {
+  vault_name: string;
+  vault_path: string;
+  description?: string;
+  schedule?: string; // Cron string format
+  force_reindex?: boolean;
+}
+
+interface SearchParams {
+  vault_name: string;
+  query: string;
+  limit?: number;
+  similarity_threshold?: number;
+  include_context?: boolean;
+  filter_metadata?: Record<string, unknown>;
+}
+
+interface SearchResult {
+  content: string;
+  metadata: {
+    file_path: string;
+    chunk_index: number;
+    file_type: string;
+    created_at?: string;
+    modified_at?: string;
+    tags?: string[];
+  };
+  similarity_score: number;
+}
+
+interface IndexingJob {
+  job_id: string;
+  vault_name: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  progress?: number;
+  files_processed?: number;
+  total_files?: number;
+  current_file?: string;
+  created_at: string;
+  completed_at?: string;
+  error_message?: string;
+}
+// Define service types locally to avoid import issues
+interface ApiError {
+  message: string;
+  status?: number;
+  statusText?: string;
+  correlationId?: string;
+  details?: unknown;
+}
+
+interface RequestConfig {
+  url?: string;
+  method?: string;
+  data?: unknown;
+  params?: Record<string, unknown>;
+  headers?: Record<string, string>;
+  timeout?: number;
+  correlationId?: string;
+}
+
+interface ResponseData<T = unknown> {
+  data: T;
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  correlationId?: string;
+}
+
+interface ApiClient {
+  get<T = unknown>(url: string, config?: RequestConfig): Promise<ResponseData<T>>;
+  post<T = unknown>(url: string, data?: unknown, config?: RequestConfig): Promise<ResponseData<T>>;
+  put<T = unknown>(url: string, data?: unknown, config?: RequestConfig): Promise<ResponseData<T>>;
+  delete<T = unknown>(url: string, config?: RequestConfig): Promise<ResponseData<T>>;
+}
+
+interface HealthStatus {
+  status: 'healthy' | 'unhealthy';
+  checks: {
+    database: 'healthy' | 'unhealthy';
+    embedding_service: 'healthy' | 'unhealthy';
+  };
+  timestamp: string;
+}
+
+interface SystemStatus {
+  system_status: 'healthy' | 'degraded' | 'unhealthy';
+  vault_collections: number;
+  active_jobs: number;
+  database_health: 'healthy' | 'unhealthy';
+  system_metrics?: {
+    cpu_usage: number;
+    memory_usage: number;
+    disk_usage: number;
+    uptime: number;
+  };
+  timestamp: string;
+}
 
 class VaultMindApiClient implements ApiClient {
   private client: AxiosInstance;
@@ -104,8 +224,25 @@ class VaultMindApiClient implements ApiClient {
     
     if (error.response) {
       // Server responded with error status
+      let message = error.message;
+      
+      // Handle different response formats
+      if (error.response.data?.message) {
+        message = error.response.data.message;
+      } else if (error.response.data?.detail) {
+        const detail = error.response.data.detail;
+        if (Array.isArray(detail)) {
+          // FastAPI validation errors
+          message = detail.map(d => d.msg || d.message || String(d)).join(', ');
+        } else if (typeof detail === 'string') {
+          message = detail;
+        } else {
+          message = String(detail);
+        }
+      }
+      
       return {
-        message: error.response.data?.message || error.response.data?.detail || error.message,
+        message,
         status: error.response.status,
         statusText: error.response.statusText,
         correlationId,
@@ -184,7 +321,7 @@ class VaultMindApiClient implements ApiClient {
   }
 
   // Indexing endpoints
-  async createIndexingJob(config: VaultConfig): Promise<APIResponse<{ job_id: string; vault_name: string }>> {
+  async createIndexingJob(config: IndexVaultRequest): Promise<APIResponse<{ job_id: string; vault_name: string }>> {
     const response = await this.post<APIResponse<{ job_id: string; vault_name: string }>>('/index', config);
     return response.data;
   }
