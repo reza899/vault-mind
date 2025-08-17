@@ -1,1 +1,1 @@
-# Test package
+# Tests module for Vault Mind backend
