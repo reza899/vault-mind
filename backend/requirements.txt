@@ -1,0 +1,40 @@
+# Core dependencies
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+pydantic==2.11.7
+python-dotenv==1.1.1
+
+# Markdown processing
+python-frontmatter==1.1.0
+markdown==3.8.2
+beautifulsoup4==4.13.4
+
+# Vector database
+chromadb==1.0.17
+langchain==0.3.27
+langchain-community==0.3.27
+
+# Text processing
+tiktoken==0.11.0
+sentence-transformers==5.1.0
+
+# File monitoring
+watchdog==6.0.0
+
+# Scheduling
+apscheduler==3.11.0
+
+# WebSocket support
+websockets==15.0.1
+python-socketio==5.13.0
+
+# Testing
+pytest==8.4.1
+pytest-asyncio==1.1.0
+pytest-cov==6.2.1
+pytest-mock==3.14.1
+pytest-bdd==8.1.0
+
+# Development
+ruff==0.12.9
+black==25.1.0
