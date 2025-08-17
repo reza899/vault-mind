@@ -35,8 +35,15 @@ class Config:
     # Development settings
     dev_mode: bool = True
     
+    # FastAPI settings
+    host: str = "0.0.0.0"
+    port: int = 8000
+    environment: str = "development"
+    log_level: str = "INFO"
+    
     def __post_init__(self):
         """Load from environment variables."""
+        # Embedding settings
         self.embedding_provider = EmbeddingProvider(
             os.getenv('EMBEDDING_PROVIDER', self.embedding_provider.value)
         )
@@ -46,6 +53,12 @@ class Config:
         self.chroma_persist_dir = os.getenv('CHROMA_PERSIST_DIR', self.chroma_persist_dir)
         self.cache_enabled = os.getenv('CACHE_ENABLED', 'true').lower() == 'true'
         self.dev_mode = os.getenv('DEV_MODE', 'true').lower() == 'true'
+        
+        # FastAPI settings
+        self.host = os.getenv('HOST', self.host)
+        self.port = int(os.getenv('PORT', str(self.port)))
+        self.environment = os.getenv('ENVIRONMENT', self.environment)
+        self.log_level = os.getenv('LOG_LEVEL', self.log_level)
 
 
 # Global config instance
