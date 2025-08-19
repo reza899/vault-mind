@@ -1,13 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import SearchInput from '@/components/search/SearchInput';
 import VaultSelector from '@/components/search/VaultSelector';
 import ResultsList from '@/components/search/ResultsList';
 import PaginationControls from '@/components/search/PaginationControls';
 import EmptyState from '@/components/search/EmptyState';
+import SearchFilters from '@/components/search/SearchFilters';
+import SearchResultActions from '@/components/search/SearchResultActions';
 import { useSearch } from '@/hooks/useSearch';
-import { useSearchHistory } from '@/hooks/useSearchHistory';
+import { useSearchHistoryStore, type SearchSuggestion } from '@/hooks/useSearchHistoryStore';
 import { useSearchStore, sortSearchResults } from '@/stores/searchStore';
-import { AdjustmentsHorizontalIcon } from '@heroicons/react/24/outline';
+import { filtersToSearchParams, type SearchFilters as FilterType } from '@/hooks/useSearchFilters';
+import { searchExportUtils } from '@/utils/searchExport';
+import { AdjustmentsHorizontalIcon, XMarkIcon } from '@heroicons/react/24/outline';
 
 interface SearchPageProps {
   onNavigate?: (page: string) => void;
@@ -15,10 +19,13 @@ interface SearchPageProps {
 
 export const SearchPage: React.FC<SearchPageProps> = ({ onNavigate }) => {
   const [showToast, setShowToast] = useState(false);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [selectedResults, setSelectedResults] = useState<Set<number>>(new Set());
+  const [toastMessage, setToastMessage] = useState('');
   
   // Hooks
   const search = useSearch({ enableAutoSearch: false });
-  const searchHistory = useSearchHistory();
+  const searchHistory = useSearchHistoryStore();
   const {
     isFilterPanelOpen,
     sortBy,
@@ -33,13 +40,115 @@ export const SearchPage: React.FC<SearchPageProps> = ({ onNavigate }) => {
   } = useSearchStore();
 
   // Handle search execution
-  const handleSearch = () => {
+  const handleSearch = useCallback((filters?: FilterType) => {
     if (!search.query.trim() || !search.vaultName) return;
     
-    search.performSearch();
+    // Include filters in search if provided
+    const searchParams = filters ? {
+      ...filtersToSearchParams(filters, search.vaultName),
+      query: search.query,
+    } : { query: search.query, vault_name: search.vaultName };
+    
+    search.performSearch(searchParams);
     searchHistory.addToHistory(search.query, search.vaultName);
     addRecentSearch(search.query);
-  };
+  }, [search, searchHistory, addRecentSearch]);
+
+  // Handle filter changes
+  const handleFiltersChange = useCallback((filters: FilterType) => {
+    // Auto-search with new filters if enabled
+    if (autoSearch && search.query.trim() && search.vaultName) {
+      handleSearch(filters);
+    }
+  }, [autoSearch, search.query, search.vaultName, handleSearch]);
+
+  // Handle suggestion selection
+  const handleSuggestionSelect = useCallback((suggestion: SearchSuggestion) => {
+    // Update search query and execute search
+    search.updateQuery(suggestion.query);
+    
+    // Add to history (will be done automatically by handleSearch)
+    setTimeout(() => {
+      handleSearch();
+    }, 0);
+  }, [search, handleSearch]);
+
+  // Handle export functionality
+  const handleExport = useCallback(async (format: 'json' | 'csv' | 'md', results: unknown[]) => {
+    try {
+      const options = {
+        includeMetadata: true,
+        includeTimestamp: true,
+        includeQuery: true,
+        query: search.query,
+        vaultName: search.vaultName
+      };
+
+      switch (format) {
+        case 'json':
+          searchExportUtils.exportToJSON(results, options);
+          break;
+        case 'csv':
+          searchExportUtils.exportToCSV(results, options);
+          break;
+        case 'md':
+          searchExportUtils.exportToMarkdown(results, options);
+          break;
+      }
+
+      setToastMessage(`Successfully exported ${results.length} results as ${format.toUpperCase()}`);
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+    } catch (error) {
+      console.error('Export failed:', error);
+      setToastMessage('Export failed. Please try again.');
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+    }
+  }, [search.query, search.vaultName]);
+
+  // Handle save functionality
+  const handleSave = useCallback(async (results: unknown[]) => {
+    try {
+      searchExportUtils.saveSearchResults(
+        results as never,
+        search.query,
+        search.vaultName,
+        `Search: ${search.query}` 
+      );
+      
+      setToastMessage(`Saved ${results.length} results`);
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+    } catch (error) {
+      console.error('Save failed:', error);
+      setToastMessage('Save failed. Please try again.');
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+    }
+  }, [search.query, search.vaultName]);
+
+  // Handle share functionality
+  const handleShare = useCallback(async (results: unknown[]) => {
+    try {
+      await searchExportUtils.shareSearchResults(
+        results as never,
+        search.query,
+        search.vaultName
+      );
+      
+      setToastMessage('Share URL copied to clipboard');
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+    } catch (error) {
+      console.error('Share failed:', error);
+      setToastMessage('Share failed. Please try again.');
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+    }
+  }, [search.query, search.vaultName]);
+
+  // Clear selection when query/vault changes (moved to auto-search effect)
 
   // Handle copy with feedback
   const handleCopy = (content: string) => {
@@ -53,11 +162,25 @@ export const SearchPage: React.FC<SearchPageProps> = ({ onNavigate }) => {
 
   // Auto-search when enabled and query/vault changes
   useEffect(() => {
+    // Always clear selection when query or vault changes
+    setSelectedResults(new Set());
+    
     if (autoSearch && search.query.trim() && search.vaultName) {
-      const timeoutId = setTimeout(handleSearch, 500);
+      const timeoutId = setTimeout(() => {
+        // Perform search
+        search.performSearch({ query: search.query, vault_name: search.vaultName });
+        // Only add to history if we actually perform a search
+        // Use a ref to avoid dependency issues
+        try {
+          searchHistory.addToHistory(search.query, search.vaultName);
+          addRecentSearch(search.query);
+        } catch (error) {
+          console.warn('Failed to add to search history:', error);
+        }
+      }, 500);
       return () => clearTimeout(timeoutId);
     }
-  }, [search.query, search.vaultName, autoSearch, handleSearch]);
+  }, [search.query, search.vaultName, autoSearch, addRecentSearch, searchHistory]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Determine empty state type
   const getEmptyStateType = () => {
@@ -90,6 +213,9 @@ export const SearchPage: React.FC<SearchPageProps> = ({ onNavigate }) => {
                 loading={search.isLoading}
                 placeholder="Search your vault..."
                 autoFocus={true}
+                vaultName={search.vaultName}
+                showSuggestions={true}
+                onSuggestionSelect={handleSuggestionSelect}
               />
             </div>
             
@@ -119,13 +245,23 @@ export const SearchPage: React.FC<SearchPageProps> = ({ onNavigate }) => {
                 </span>
               </label>
 
-              {/* Filter panel toggle */}
+              {/* Advanced filter panel toggle */}
+              <button
+                onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+                className="flex items-center space-x-1 px-3 py-1 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+              >
+                <AdjustmentsHorizontalIcon className="h-4 w-4" />
+                <span>Advanced Filters</span>
+                {showAdvancedFilters && <XMarkIcon className="h-3 w-3" />}
+              </button>
+
+              {/* Basic filter panel toggle */}
               <button
                 onClick={toggleFilterPanel}
                 className="flex items-center space-x-1 px-3 py-1 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
               >
                 <AdjustmentsHorizontalIcon className="h-4 w-4" />
-                <span>Filters</span>
+                <span>Basic Filters</span>
               </button>
             </div>
 
@@ -142,7 +278,18 @@ export const SearchPage: React.FC<SearchPageProps> = ({ onNavigate }) => {
             )}
           </div>
 
-          {/* Filter Panel */}
+          {/* Advanced Filter Panel */}
+          {showAdvancedFilters && (
+            <div className="mt-4">
+              <SearchFilters
+                vaultName={search.vaultName}
+                onFiltersChange={handleFiltersChange}
+                className="bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4"
+              />
+            </div>
+          )}
+
+          {/* Basic Filter Panel */}
           {isFilterPanelOpen && (
             <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -227,12 +374,30 @@ export const SearchPage: React.FC<SearchPageProps> = ({ onNavigate }) => {
           />
         ) : (
           <div className="space-y-6">
+            {/* Search Result Actions */}
+            {!search.isLoading && sortedResults.length > 0 && (
+              <SearchResultActions
+                results={sortedResults}
+                selectedResults={selectedResults}
+                onSelectionChange={setSelectedResults}
+                onCopy={handleCopy}
+                onExport={handleExport}
+                onSave={handleSave}
+                onShare={handleShare}
+                query={search.query}
+                vaultName={search.vaultName}
+              />
+            )}
+
             {/* Results */}
             <ResultsList
               results={sortedResults}
               query={search.query}
               loading={search.isLoading}
               onCopy={handleCopy}
+              selectedResults={selectedResults}
+              onSelectionChange={setSelectedResults}
+              showSelection={sortedResults.length > 0}
             />
 
             {/* Pagination */}
@@ -250,10 +415,10 @@ export const SearchPage: React.FC<SearchPageProps> = ({ onNavigate }) => {
         )}
       </div>
 
-      {/* Copy Toast */}
+      {/* Toast Notifications */}
       {showToast && (
         <div className="fixed bottom-4 right-4 bg-green-600 text-white px-4 py-2 rounded-lg shadow-lg z-50 animate-fade-in-up">
-          Content copied to clipboard!
+          {toastMessage || 'Content copied to clipboard!'}
         </div>
       )}
     </div>

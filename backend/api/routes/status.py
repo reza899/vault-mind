@@ -108,7 +108,7 @@ async def get_system_status(
         
         # If specific vault requested, filter collections
         if vault_name:
-            vault_collections = [v for v in vault_collections if v.get("name") == vault_name]
+            vault_collections = [v for v in vault_collections if v.get("vault_name") == vault_name]
             if not vault_collections:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -201,7 +201,6 @@ async def get_system_status_with_body(
         
         # Delegate to the main status logic by calling the GET endpoint logic
         # This avoids code duplication while providing both interfaces
-        from fastapi import Request as FastAPIRequest
         
         # Create a mock request with query parameters
         class MockRequest:

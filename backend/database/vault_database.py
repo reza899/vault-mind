@@ -228,10 +228,13 @@ class VaultDatabase:
             for collection in all_collections:
                 if self._is_vault_collection(collection):
                     vault_info = {
-                        "name": collection.metadata.get("vault_name"),
+                        "vault_name": collection.metadata.get("vault_name"),
                         "collection_name": collection.name,
+                        "document_count": collection.count() if hasattr(collection, 'count') else 0,
                         "vault_path": collection.metadata.get("vault_path"),
                         "description": collection.metadata.get("description"),
+                        "created_at": collection.metadata.get("created_at"),
+                        "last_indexed": collection.metadata.get("last_indexed"),
                         "metadata": collection.metadata
                     }
                     vault_collections.append(vault_info)

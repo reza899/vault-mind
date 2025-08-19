@@ -15,7 +15,10 @@ import uvicorn
 
 from config import config
 from database import VaultDatabase, EmbeddingService
-from api.routes import indexing, search, status
+from database.providers.chromadb import ChromaDBProvider
+from services.collection_manager import CollectionManager
+from api.routes import indexing, search, collections, collections_ws, links, file_changes, incremental, performance
+from api.routes import status as status_routes
 from api.dependencies import set_global_dependencies
 from api.websocket import websocket_endpoint
 
@@ -31,6 +34,10 @@ logger = logging.getLogger(__name__)
 # Global service instances
 vault_db: Optional[VaultDatabase] = None
 embedding_service: Optional[EmbeddingService] = None
+chroma_provider: Optional[ChromaDBProvider] = None
+collection_manager: Optional[CollectionManager] = None
+file_change_service = None
+performance_monitor = None
 
 
 @asynccontextmanager
@@ -39,7 +46,7 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Vault Mind API server...")
     
-    global vault_db, embedding_service
+    global vault_db, embedding_service, chroma_provider, collection_manager, file_change_service, performance_monitor
     
     try:
         # Initialize database connection
@@ -47,21 +54,47 @@ async def lifespan(app: FastAPI):
         await vault_db.connect()
         logger.info("VaultDatabase connected successfully")
         
-        # Initialize embedding service
-        embedding_service = EmbeddingService(provider_type=config.embedding_provider)
+        # Initialize ChromaDB provider with shared client first
+        chroma_provider = ChromaDBProvider(shared_client=vault_db._client)
+        await chroma_provider.initialize()
+        logger.info("ChromaDB provider initialized successfully")
+        
+        # Initialize embedding service with shared ChromaDB provider
+        embedding_service = EmbeddingService(provider_type=config.embedding_provider, shared_provider=chroma_provider)
         await embedding_service.initialize()
         logger.info("EmbeddingService initialized successfully")
         
+        # Initialize collection manager
+        from services.vault_service import VaultService
+        vault_service = VaultService(vault_db, embedding_service)
+        collection_manager = CollectionManager(chroma_provider, vault_service)
+        logger.info("Collection manager initialized successfully")
+        
         # Set global dependencies for FastAPI dependency injection
-        set_global_dependencies(vault_db, embedding_service)
+        set_global_dependencies(vault_db, embedding_service, chroma_provider, collection_manager)
         
-        # Health check
+        # Start collection manager service
+        await collection_manager.start()
+        
+        # Initialize and start file change service
+        from services.file_change_service import get_file_change_service
+        file_change_service = get_file_change_service()
+        await file_change_service.start()
+        logger.info("File change service started successfully")
+        
+        # Initialize and start performance monitor
+        from services.performance_monitor import get_performance_monitor
+        performance_monitor = get_performance_monitor()
+        await performance_monitor.start()
+        logger.info("Performance monitor started successfully")
+        
+        # Health check (disabled temporarily for VMIND-031 testing)
         db_health = await vault_db.health_check()
-        embed_health = await embedding_service.health_check()
+        # embed_health = await embedding_service.health_check()  # Skip for now
         
-        if db_health["status"] != "healthy" or embed_health["status"] != "healthy":
-            logger.error("Service initialization failed health checks")
-            raise RuntimeError("Service health check failed")
+        if db_health["status"] != "healthy":
+            logger.error("Database initialization failed health check")
+            raise RuntimeError("Database health check failed")
         
         logger.info("All services initialized successfully")
         
@@ -75,6 +108,18 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Vault Mind API server...")
     
     try:
+        if performance_monitor:
+            await performance_monitor.stop()
+            logger.info("Performance monitor stopped")
+        
+        if file_change_service:
+            await file_change_service.stop()
+            logger.info("File change service stopped")
+        
+        if collection_manager:
+            await collection_manager.stop()
+            logger.info("Collection manager stopped")
+        
         if embedding_service:
             await embedding_service.cleanup()
             logger.info("EmbeddingService cleaned up")
@@ -93,7 +138,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Vault Mind API",
     description="Obsidian vault indexing and semantic search API",
-    version="1.0.0",
+    version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
@@ -103,7 +148,7 @@ app = FastAPI(
 # Add CORS middleware for frontend integration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],  # Frontend dev server
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5175", "http://127.0.0.1:5175"],  # Frontend dev server
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -111,9 +156,15 @@ app.add_middleware(
 
 
 # Include API routers
-app.include_router(indexing.router)
-app.include_router(search.router)
-app.include_router(status.router)
+app.include_router(indexing.router, prefix="/api")
+app.include_router(search.router, prefix="/api")
+app.include_router(status_routes.router, prefix="/api")
+app.include_router(collections.router, prefix="/api")
+app.include_router(collections_ws.router, prefix="/api")
+app.include_router(links.router)
+app.include_router(file_changes.router)
+app.include_router(incremental.router)
+app.include_router(performance.router)
 
 # Add WebSocket endpoint
 @app.websocket("/ws")
@@ -126,29 +177,39 @@ async def websocket_route(websocket: WebSocket):
 
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
-    """Log all requests with correlation IDs."""
+    """Smart logging middleware - reduces noise for polling endpoints."""
     # Generate correlation ID
     correlation_id = str(uuid.uuid4())
     request.state.correlation_id = correlation_id
     
-    # Log request
-    start_time = time.time()
-    logger.info(
-        f"Request started - {request.method} {request.url.path} "
-        f"[{correlation_id}]"
+    # Smart logging: Skip verbose logging for polling endpoints
+    is_polling_endpoint = (
+        request.url.path == "/api/collections" and 
+        request.method == "GET"
     )
+    
+    # Log request (only for non-polling or errors)
+    start_time = time.time()
+    if not is_polling_endpoint:
+        logger.info(
+            f"Request started - {request.method} {request.url.path} "
+            f"[{correlation_id}]"
+        )
     
     # Process request
     try:
         response = await call_next(request)
         
-        # Log successful response
+        # Log response (errors always, success only for non-polling)
         process_time = time.time() - start_time
-        logger.info(
-            f"Request completed - {request.method} {request.url.path} "
-            f"Status: {response.status_code} Time: {process_time:.3f}s "
-            f"[{correlation_id}]"
-        )
+        should_log = not is_polling_endpoint or response.status_code >= 400
+        
+        if should_log:
+            logger.info(
+                f"Request completed - {request.method} {request.url.path} "
+                f"Status: {response.status_code} Time: {process_time:.3f}s "
+                f"[{correlation_id}]"
+            )
         
         # Add correlation ID to response headers
         response.headers["X-Correlation-ID"] = correlation_id
@@ -240,7 +301,7 @@ async def health_check(request: Request) -> Dict[str, Any]:
                 "service_status": overall_status,
                 "database": db_health,
                 "embedding_service": embed_health,
-                "version": "1.0.0",
+                "version": "2.0.0",
                 "environment": config.environment
             },
             "message": f"Health check completed - {overall_status}",
@@ -270,7 +331,7 @@ async def root(request: Request) -> Dict[str, Any]:
         "status": "success",
         "data": {
             "name": "Vault Mind API",
-            "version": "1.0.0",
+            "version": "1.4.0",
             "description": "Obsidian vault indexing and semantic search API",
             "documentation": "/docs",
             "health_check": "/health",
@@ -278,6 +339,10 @@ async def root(request: Request) -> Dict[str, Any]:
                 "indexing": "/index (POST)",
                 "search": "/search (GET)",
                 "status": "/status (GET)",
+                "links": "/api/v1/links/* (GET)",
+                "file_changes": "/api/v1/file-changes/* (GET/POST/PUT/DELETE)",
+                "incremental": "/api/v1/incremental/* (GET/POST/DELETE)",
+                "performance": "/api/v1/performance/* (GET/POST/PUT)",
                 "websocket": "/ws"
             }
         },

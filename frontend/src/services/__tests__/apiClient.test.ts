@@ -15,7 +15,7 @@ const importApiClient = async () => {
 };
 
 describe('VaultMindApiClient', () => {
-  let apiClient: any;
+  let apiClient: VaultMindApiClient;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -147,7 +147,16 @@ describe('VaultMindApiClient', () => {
 
       const result = await apiClient.searchVault(searchParams);
 
-      expect(mockAxios.post).toHaveBeenCalledWith('/search', searchParams, undefined);
+      expect(mockAxios.post).toHaveBeenCalledWith('/search', {
+        vault_name: 'test_vault',
+        query: 'test query',
+        limit: 5,
+        similarity_threshold: 0.7,
+        include_context: undefined,
+        filter_metadata: {
+          tags: {}
+        }
+      }, undefined);
       expect(result.data).toEqual(searchResults);
     });
 

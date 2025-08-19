@@ -24,7 +24,8 @@ describe('EmptyState', () => {
     it('shows search tips', () => {
       render(<EmptyState type="no-query" />);
       
-      expect(screen.getByText('💡 Tips:')).toBeInTheDocument();
+      // Tips text is inside a paragraph with emoji and strong tag
+      expect(screen.getByText('Tips:')).toBeInTheDocument();
       expect(screen.getByText(/meeting notes 2024/)).toBeInTheDocument();
       expect(screen.getByText(/TODO/)).toBeInTheDocument();
     });

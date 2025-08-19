@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { PlusIcon, FolderIcon, ArrowLeftIcon, ClockIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 import Logo from '@/components/ui/Logo';
 import { useVaultConfigStore } from '@/stores/vaultConfigStore';
+import { useKeyboardShortcut, getCommandKey } from '@/hooks/useKeyboardShortcut';
+import { useVaultContext } from '@/hooks/useVaultContext';
+import VaultSwitcher from '@/components/vault/VaultSwitcher';
 import SearchPage from '@/pages/SearchPage';
 import apiClient from '@/services/apiClient';
 
@@ -24,10 +27,15 @@ interface VaultConfig {
 }
 import PathPicker from '@/components/vault/PathPicker';
 import ScheduleConfig from '@/components/vault/ScheduleConfig';
+import VaultDashboard from '@/components/vault/VaultDashboard';
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<'home' | 'configure' | 'search'>('home');
+  const [currentPage, setCurrentPage] = useState<'home' | 'configure' | 'search' | 'vaults'>('home');
   const [vaultName, setVaultName] = useState('');
+  const [isVaultSwitcherOpen, setIsVaultSwitcherOpen] = useState(false);
+  
+  // Vault context management
+  const [vaultContext, vaultActions] = useVaultContext();
   const [vaultPath, setVaultPath] = useState('');
   const [description, setDescription] = useState('');
   const [schedule, setSchedule] = useState<IndexingSchedule>({
@@ -39,6 +47,17 @@ function App() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<{ jobId: string; vaultName: string } | null>(null);
   const { saveConfig } = useVaultConfigStore();
+
+  // Global keyboard shortcut for vault switcher (Cmd/Ctrl + K)
+  useKeyboardShortcut(`${getCommandKey()}+k`, () => {
+    setIsVaultSwitcherOpen(true);
+  });
+
+  const handleVaultSelect = (selectedVaultName: string) => {
+    vaultActions.switchVault(selectedVaultName);
+    // You could navigate to search page or update the current context here
+    console.log('Vault selected:', selectedVaultName);
+  };
 
   const handleVaultSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -125,11 +144,11 @@ function App() {
       } else {
         throw new Error(response.message || 'Failed to create indexing job');
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error creating indexing job:', error);
       
       // Use the cleaned error message from API client
-      const errorMessage = error?.message || 'Failed to start indexing. Please check your vault path and try again.';
+      const errorMessage = error instanceof Error ? error.message : 'Failed to start indexing. Please check your vault path and try again.';
       setSubmitError(errorMessage);
     } finally {
       setIsSubmitting(false);
@@ -192,7 +211,13 @@ function App() {
                 <p className="text-gray-600 dark:text-gray-400 mb-4">
                   Search your indexed vaults with semantic search and explore your knowledge base.
                 </p>
-                <button className="text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-200 font-medium">
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCurrentPage('search');
+                  }}
+                  className="text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-200 font-medium"
+                >
                   Start Searching →
                 </button>
               </div>
@@ -213,16 +238,25 @@ function App() {
                 <p className="text-gray-600 dark:text-gray-400 mb-4">
                   Set up a new Obsidian vault for indexing with customizable settings and scheduling.
                 </p>
-                <button className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 font-medium">
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCurrentPage('configure');
+                  }}
+                  className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 font-medium"
+                >
                   Get Started →
                 </button>
               </div>
 
               {/* Manage Existing Vaults */}
-              <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 transition-colors cursor-pointer opacity-50">
+              <div 
+                className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 hover:border-purple-300 dark:hover:border-purple-600 transition-colors cursor-pointer"
+                onClick={() => setCurrentPage('vaults')}
+              >
                 <div className="flex items-center space-x-4 mb-4">
-                  <div className="p-3 bg-gray-100 dark:bg-gray-900/20 rounded-lg">
-                    <FolderIcon className="w-6 h-6 text-gray-600 dark:text-gray-400" />
+                  <div className="p-3 bg-purple-100 dark:bg-purple-900/20 rounded-lg">
+                    <FolderIcon className="w-6 h-6 text-purple-600 dark:text-purple-400" />
                   </div>
                   <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
                     Manage Vaults
@@ -231,8 +265,14 @@ function App() {
                 <p className="text-gray-600 dark:text-gray-400 mb-4">
                   View and manage your existing vault configurations, monitor indexing progress.
                 </p>
-                <button className="text-gray-400 font-medium cursor-not-allowed">
-                  Coming Soon
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCurrentPage('vaults');
+                  }}
+                  className="text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-200 font-medium"
+                >
+                  View Vaults →
                 </button>
               </div>
             </div>
@@ -248,6 +288,48 @@ function App() {
         </>
       ) : currentPage === 'search' ? (
         <SearchPage onNavigate={setCurrentPage} />
+      ) : currentPage === 'vaults' ? (
+        <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+          {/* Vaults Dashboard Header */}
+          <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="flex items-center justify-between h-16">
+                <div className="flex items-center space-x-4">
+                  <button
+                    onClick={() => setCurrentPage('home')}
+                    className="flex items-center space-x-2 px-3 py-2 text-gray-700 dark:text-gray-300 
+                      hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors
+                      border border-gray-300 dark:border-gray-600"
+                    title="Back to Home"
+                  >
+                    <ArrowLeftIcon className="w-4 h-4" />
+                    <span className="text-sm font-medium">Back</span>
+                  </button>
+                  <div className="flex items-center space-x-2 text-gray-500 dark:text-gray-400">
+                    <span className="text-sm">Home</span>
+                    <span className="text-sm">/</span>
+                    <span className="text-sm text-gray-900 dark:text-gray-100 font-medium">Vault Collections</span>
+                  </div>
+                </div>
+                <div>
+                  <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                    Vault Collections
+                  </h1>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <VaultDashboard 
+              onCreateVault={() => setCurrentPage('configure')}
+              onViewVaultDetails={(collectionName) => {
+                console.log('View vault details:', collectionName);
+                // TODO: Navigate to vault details page
+              }}
+            />
+          </div>
+        </div>
       ) : (
         <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
           {/* Configuration Page */}
@@ -426,6 +508,18 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Global Vault Switcher */}
+      <VaultSwitcher
+        isOpen={isVaultSwitcherOpen}
+        onClose={() => setIsVaultSwitcherOpen(false)}
+        currentVaultName={vaultContext.currentVault || undefined}
+        onVaultSelect={handleVaultSelect}
+        onCreateVault={() => {
+          setCurrentPage('configure');
+          setIsVaultSwitcherOpen(false);
+        }}
+      />
     </div>
   );
 }

@@ -116,14 +116,17 @@ describe('SearchInput', () => {
   it('disables search button when loading', () => {
     render(<SearchInput {...defaultProps} query="test" loading={true} />);
     
-    const searchButton = screen.getByRole('button');
+    const searchButtons = screen.getAllByRole('button');
+    const searchButton = searchButtons.find(button => button.hasAttribute('disabled') && !button.getAttribute('aria-label'));
     expect(searchButton).toBeDisabled();
   });
 
   it('shows loading spinner when loading', () => {
     render(<SearchInput {...defaultProps} loading={true} />);
     
-    const spinner = screen.getByRole('button').querySelector('.animate-spin');
+    const searchButtons = screen.getAllByRole('button');
+    const searchButton = searchButtons.find(button => button.hasAttribute('disabled') && !button.getAttribute('aria-label'));
+    const spinner = searchButton?.querySelector('.animate-spin');
     expect(spinner).toBeInTheDocument();
   });
 

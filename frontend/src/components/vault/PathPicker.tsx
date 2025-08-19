@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { FolderIcon, DocumentIcon, ArrowLeftIcon } from '@heroicons/react/24/outline';
 
 interface FileSystemItem {
@@ -30,7 +30,7 @@ const PathPicker: React.FC<PathPickerProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   // Mock file system data for development
-  const mockFileSystem: Record<string, FileSystemItem[]> = {
+  const mockFileSystem = useMemo(() => ({
     '/': [
       { name: 'Users', path: '/Users', type: 'directory' },
       { name: 'Applications', path: '/Applications', type: 'directory' },
@@ -50,7 +50,7 @@ const PathPicker: React.FC<PathPickerProps> = ({
       { name: 'WorkVault', path: '/Users/reza/Documents/WorkVault', type: 'directory' },
       { name: 'Notes.md', path: '/Users/reza/Documents/Notes.md', type: 'file' }
     ]
-  };
+  }), []);
 
   const loadDirectory = useCallback(async (path: string) => {
     setLoading(true);
@@ -70,7 +70,7 @@ const PathPicker: React.FC<PathPickerProps> = ({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [mockFileSystem]);
 
   useEffect(() => {
     if (isOpen) {

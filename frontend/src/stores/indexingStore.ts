@@ -18,7 +18,12 @@ interface IndexingStore extends IndexingState {
   clearProgressUpdates: () => void;
 
   // WebSocket message handling
-  handleWebSocketMessage: (message: any) => void;
+  handleWebSocketMessage: (message: {
+    type: string;
+    data?: Record<string, unknown>;
+    timestamp?: number;
+    job_id?: string;
+  }) => void;
 
   // Utility functions
   getActiveJobs: () => IndexingJob[];
@@ -88,7 +93,12 @@ const useIndexingStore = create<IndexingStore>((set, get) => ({
     set({ progressUpdates: new Map() }),
 
   // WebSocket message handling
-  handleWebSocketMessage: (message: any) => {
+  handleWebSocketMessage: (message: {
+    type: string;
+    data?: Record<string, unknown>;
+    timestamp?: number;
+    job_id?: string;
+  }) => {
     const { type, data } = message;
 
     switch (type) {

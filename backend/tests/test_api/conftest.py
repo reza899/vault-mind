@@ -5,7 +5,6 @@ Sets up test environment and fixtures.
 import pytest
 import asyncio
 import tempfile
-from pathlib import Path
 
 
 @pytest.fixture(scope="session")

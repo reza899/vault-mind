@@ -5,7 +5,8 @@ import {
   ChevronDownIcon,
   ChevronUpIcon,
   CalendarIcon,
-  TagIcon
+  TagIcon,
+  CheckIcon
 } from '@heroicons/react/24/outline';
 interface SearchResult {
   content: string;
@@ -25,6 +26,10 @@ interface ResultCardProps {
   query: string;
   onCopy?: (content: string) => void;
   className?: string;
+  isSelected?: boolean;
+  onSelectionChange?: (selected: boolean) => void;
+  showSelection?: boolean;
+  index?: number;
 }
 
 export const ResultCard: React.FC<ResultCardProps> = ({
@@ -32,6 +37,10 @@ export const ResultCard: React.FC<ResultCardProps> = ({
   query,
   onCopy,
   className = "",
+  isSelected = false,
+  onSelectionChange,
+  showSelection = false,
+  index: _index,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copying' | 'copied'>('idle');
@@ -105,10 +114,31 @@ export const ResultCard: React.FC<ResultCardProps> = ({
   const similarityPercentage = Math.round(result.similarity_score * 100);
 
   return (
-    <div className={`bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md transition-shadow ${className}`}>
+    <div className={`bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md transition-shadow ${
+      isSelected ? 'ring-2 ring-blue-500 border-blue-500' : ''
+    } ${className}`}>
       {/* Header with file info and similarity score */}
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center space-x-2 flex-1 min-w-0">
+          {/* Selection checkbox */}
+          {showSelection && (
+            <button
+              onClick={() => onSelectionChange?.(!isSelected)}
+              className="flex-shrink-0 p-1 -m-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+              title={isSelected ? 'Deselect result' : 'Select result'}
+            >
+              <div className={`w-4 h-4 border-2 rounded flex items-center justify-center transition-colors ${
+                isSelected 
+                  ? 'bg-blue-600 border-blue-600' 
+                  : 'border-gray-300 dark:border-gray-600 hover:border-blue-500'
+              }`}>
+                {isSelected && (
+                  <CheckIcon className="w-3 h-3 text-white" />
+                )}
+              </div>
+            </button>
+          )}
+          
           <div className="text-gray-500 dark:text-gray-400 flex-shrink-0">
             {getFileIcon(result.metadata.file_type)}
           </div>

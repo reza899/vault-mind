@@ -4,3 +4,6 @@ export { default as ResultCard } from './ResultCard';
 export { default as ResultsList } from './ResultsList';
 export { default as PaginationControls } from './PaginationControls';
 export { default as EmptyState } from './EmptyState';
+export { default as SearchFilters } from './SearchFilters';
+export { default as SearchSuggestions } from './SearchSuggestions';
+export { default as SearchResultActions } from './SearchResultActions';

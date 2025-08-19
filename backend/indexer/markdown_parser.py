@@ -91,10 +91,10 @@ class MarkdownParser:
                 clean_links.append(link.strip())
             metadata['wikilinks'] = list(set(clean_links))
         
-        # Extract content tags (hashtags)
-        content_tags = self.tag_pattern.findall(content)
+        # Extract content tags (hashtags) with enhanced processing
+        content_tags = self._extract_enhanced_tags(content)
         if content_tags:
-            metadata['content_tags'] = list(set(content_tags))
+            metadata['content_tags'] = content_tags
         
         # Calculate word count (excluding markdown syntax)
         # Remove code blocks first
@@ -113,6 +113,29 @@ class MarkdownParser:
         
         words = self.word_pattern.findall(content_for_count)
         metadata['word_count'] = len(words)
+    
+    def _extract_enhanced_tags(self, content: str) -> List[str]:
+        """Extract and process tags with enhanced logic."""
+        # Find all hashtags in content
+        raw_tags = self.tag_pattern.findall(content)
+        
+        processed_tags = []
+        for tag in raw_tags:
+            # Split hierarchical tags (e.g., #project/work/urgent -> [project, project/work, project/work/urgent])
+            tag_parts = tag.split('/')
+            for i in range(len(tag_parts)):
+                partial_tag = '/'.join(tag_parts[:i+1])
+                processed_tags.append(partial_tag)
+        
+        # Remove duplicates while preserving order and filter out invalid tags
+        seen = set()
+        unique_tags = []
+        for tag in processed_tags:
+            if tag not in seen and len(tag) > 0 and len(tag) <= 50:  # Reasonable tag length limit
+                seen.add(tag)
+                unique_tags.append(tag)
+        
+        return unique_tags
     
     def _add_file_metadata(self, file_path: Path, metadata: Dict[str, Any]) -> None:
         """Add file system metadata."""

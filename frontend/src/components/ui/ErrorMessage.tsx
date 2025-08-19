@@ -18,8 +18,8 @@ const ErrorMessage: React.FC<ErrorMessageProps> = ({
 }) => {
   if (!error) return null;
 
-  const isApiError = (err: any): err is ApiError => {
-    return err && typeof err === 'object' && 'message' in err;
+  const isApiError = (err: unknown): err is ApiError => {
+    return err !== null && typeof err === 'object' && 'message' in err;
   };
 
   const apiError = isApiError(error) ? error : null;

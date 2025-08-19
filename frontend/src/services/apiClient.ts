@@ -8,32 +8,7 @@ interface APIResponse<T = unknown> {
   request_id: string;
 }
 
-interface VaultConfig {
-  vault_name: string;
-  vault_path: string;
-  description?: string;
-  schedule?: {
-    enabled: boolean;
-    frequency: 'manual' | 'hourly' | 'daily' | 'weekly' | 'custom';
-    time?: string;
-    interval?: number;
-    timezone?: string;
-    days_of_week?: number[];
-    cron_expression?: string;
-  };
-  advanced?: {
-    chunk_size: number;
-    chunk_overlap: number;
-    embedding_model: string;
-    ignore_patterns: string[];
-    file_types: string[];
-    max_file_size_mb: number;
-    parallel_processing?: boolean;
-    batch_size?: number;
-    custom_metadata?: Record<string, unknown>;
-  };
-  force_reindex?: boolean;
-}
+// VaultConfig interface moved to types/index.ts to avoid duplication
 
 // Backend API format (matches Python Pydantic model)
 interface IndexVaultRequest {
@@ -51,6 +26,8 @@ interface SearchParams {
   similarity_threshold?: number;
   include_context?: boolean;
   filter_metadata?: Record<string, unknown>;
+  include_tags?: string[];
+  exclude_tags?: string[];
 }
 
 interface SearchResult {
@@ -64,6 +41,12 @@ interface SearchResult {
     tags?: string[];
   };
   similarity_score: number;
+}
+
+interface VaultTag {
+  name: string;
+  frequency: number;
+  type: 'content' | 'frontmatter' | 'unknown';
 }
 
 interface IndexingJob {
@@ -135,13 +118,97 @@ interface SystemStatus {
   timestamp: string;
 }
 
+// Collection Management types (VMIND-031)
+interface Collection {
+  collection_name: string;
+  vault_path: string;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+  last_indexed_at?: string;
+  document_count: number;
+  size_bytes: number;
+  status: 'created' | 'indexing' | 'active' | 'error' | 'paused' | 'deleting';
+  health_status: 'healthy' | 'warning' | 'error' | 'unknown';
+  error_message?: string;
+  chroma_exists: boolean;
+}
+
+interface PaginationInfo {
+  current_page: number;
+  total_pages: number;
+  total_items: number;
+  items_per_page: number;
+  has_next: boolean;
+  has_previous: boolean;
+}
+
+interface CollectionListResponse {
+  collections: Collection[];
+  pagination: PaginationInfo;
+}
+
+interface CreateCollectionRequest {
+  collection_name: string;
+  vault_path: string;
+  description?: string;
+  config?: {
+    chunk_size?: number;
+    chunk_overlap?: number;
+    embedding_model?: string;
+    ignore_patterns?: string[];
+  };
+}
+
+interface CreateCollectionResponse {
+  collection_id: string;
+  job_id: string;
+  status: string;
+  estimated_indexing_time?: number;
+}
+
+interface CollectionStatus {
+  collection_name: string;
+  status: string;
+  document_count: number;
+  last_indexed_at?: string;
+  health_status: string;
+  error_message?: string;
+  active_job?: {
+    job_id: string;
+    job_type: string;
+    status: string;
+    progress?: number;
+  } | null;
+}
+
+interface CollectionHealth {
+  collection_name: string;
+  exists: boolean;
+  accessible: boolean;
+  document_count: number;
+  errors: string[];
+  status: 'healthy' | 'empty' | 'error';
+}
+
+interface DeleteConfirmation {
+  collection_name: string;
+  vault_path: string;
+  document_count: number;
+  size_estimate: number;
+  created_at: string;
+  confirmation_token: string;
+  token_expires_in: number;
+  warning: string;
+}
+
 class VaultMindApiClient implements ApiClient {
   private client: AxiosInstance;
   private correlationIdCounter = 0;
 
   constructor() {
     this.client = axios.create({
-      baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
+      baseURL: (import.meta.env.VITE_API_URL || 'http://localhost:8000') + '/api',
       timeout: 30000,
       headers: {
         'Content-Type': 'application/json',
@@ -218,7 +285,7 @@ class VaultMindApiClient implements ApiClient {
     return `fe-${Date.now()}-${this.correlationIdCounter}`;
   }
 
-  private createApiError(error: any): ApiError {
+  private createApiError(error: {response?: {status: number; data?: {message?: string; detail?: string}; headers: Record<string, string>}; config?: {headers: Record<string, string>}; message: string; code?: string}): ApiError {
     const correlationId = error.response?.headers['x-correlation-id'] || 
                          error.config?.headers['X-Correlation-ID'];
     
@@ -264,7 +331,7 @@ class VaultMindApiClient implements ApiClient {
     }
   }
 
-  private shouldRetry(error: any): boolean {
+  private shouldRetry(error: {response?: {status: number}; code?: string}): boolean {
     return (
       !error.response || // Network error
       error.response.status >= 500 || // Server error
@@ -338,16 +405,45 @@ class VaultMindApiClient implements ApiClient {
 
   // Search endpoints
   async searchVault(params: SearchParams): Promise<APIResponse<{ results: SearchResult[]; total_found: number; search_time_ms: number }>> {
-    const { vault_name, query, ...searchParams } = params;
+    const { vault_name, query, include_tags, exclude_tags, ...searchParams } = params;
     
-    if (Object.keys(searchParams).length > 0) {
+    // Check if we need to use POST for complex parameters
+    const hasComplexParams = Object.keys(searchParams).length > 0 || 
+                            (include_tags && include_tags.length > 0) || 
+                            (exclude_tags && exclude_tags.length > 0);
+    
+    if (hasComplexParams) {
       // Use POST for complex search with body parameters
-      const response = await this.post<APIResponse<{ results: SearchResult[]; total_found: number; search_time_ms: number }>>('/search', params);
+      const requestBody = {
+        vault_name,
+        query,
+        limit: searchParams.limit,
+        similarity_threshold: searchParams.similarity_threshold,
+        include_context: searchParams.include_context,
+        filter_metadata: {
+          // Remove offset as it's not expected by the backend model
+          ...searchParams.filter_metadata,
+          tags: {
+            ...(include_tags && include_tags.length > 0 && { include: include_tags }),
+            ...(exclude_tags && exclude_tags.length > 0 && { exclude: exclude_tags }),
+          }
+        }
+      };
+      
+      const response = await this.post<APIResponse<{ results: SearchResult[]; total_found: number; search_time_ms: number }>>('/search', requestBody);
       return response.data;
     } else {
       // Use GET for simple search with query parameters
+      const queryParams: Record<string, unknown> = { vault_name, query };
+      if (include_tags && include_tags.length > 0) {
+        queryParams.include_tags = include_tags.join(',');
+      }
+      if (exclude_tags && exclude_tags.length > 0) {
+        queryParams.exclude_tags = exclude_tags.join(',');
+      }
+      
       const response = await this.get<APIResponse<{ results: SearchResult[]; total_found: number; search_time_ms: number }>>('/search', {
-        params: { vault_name, query },
+        params: queryParams,
       });
       return response.data;
     }
@@ -355,6 +451,56 @@ class VaultMindApiClient implements ApiClient {
 
   async getSearchableCollections(): Promise<APIResponse<{ collections: string[]; total_collections: number }>> {
     const response = await this.get<APIResponse<{ collections: string[]; total_collections: number }>>('/search/collections');
+    return response.data;
+  }
+
+  async getVaultTags(vaultName: string, limit: number = 100): Promise<APIResponse<{ tags: VaultTag[]; total_tags: number; vault_name: string }>> {
+    const response = await this.get<APIResponse<{ tags: VaultTag[]; total_tags: number; vault_name: string }>>(`/search/tags/${vaultName}`, {
+      params: { limit }
+    });
+    return response.data;
+  }
+
+  // Collection Management endpoints (VMIND-031)
+  async getCollections(page: number = 1, limit: number = 50): Promise<APIResponse<CollectionListResponse>> {
+    const response = await this.get<APIResponse<CollectionListResponse>>('/collections', {
+      params: { page, limit }
+    });
+    return response.data;
+  }
+
+  async createCollection(data: CreateCollectionRequest): Promise<APIResponse<CreateCollectionResponse>> {
+    const response = await this.post<APIResponse<CreateCollectionResponse>>('/collections', data);
+    return response.data;
+  }
+
+  async getCollectionStatus(collectionName: string): Promise<APIResponse<CollectionStatus>> {
+    const response = await this.get<APIResponse<CollectionStatus>>(`/collections/${collectionName}/status`);
+    return response.data;
+  }
+
+  async getCollectionHealth(collectionName: string): Promise<APIResponse<CollectionHealth>> {
+    const response = await this.get<APIResponse<CollectionHealth>>(`/collections/${collectionName}/health`);
+    return response.data;
+  }
+
+  async deleteCollection(collectionName: string, confirmationToken: string): Promise<APIResponse<{ status: string; cleanup_job_id: string }>> {
+    const response = await this.delete<APIResponse<{ status: string; cleanup_job_id: string }>>(`/collections/${collectionName}`, {
+      data: { confirmation_token: confirmationToken }
+    });
+    return response.data;
+  }
+
+  async getDeleteConfirmation(collectionName: string): Promise<APIResponse<DeleteConfirmation>> {
+    const response = await this.delete<APIResponse<DeleteConfirmation>>(`/collections/${collectionName}`);
+    return response.data;
+  }
+
+  async reindexCollection(collectionName: string, mode: string = 'incremental'): Promise<APIResponse<{ job_id: string; status: string }>> {
+    const response = await this.post<APIResponse<{ job_id: string; status: string }>>(`/collections/${collectionName}/reindex`, {
+      mode,
+      force: false
+    });
     return response.data;
   }
 }

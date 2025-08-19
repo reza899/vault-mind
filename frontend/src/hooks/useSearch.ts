@@ -73,17 +73,14 @@ export const useSearch = (options: UseSearchOptions = {}) => {
       return null;
     }
 
-    const offset = (searchState.currentPage - 1) * searchState.resultsPerPage;
-
     return {
       vault_name: searchState.vaultName,
       query: searchState.query.trim(),
       limit: searchState.resultsPerPage,
       similarity_threshold: searchState.similarityThreshold,
       include_context: true,
-      filter_metadata: {
-        offset,
-      },
+      // Note: Pagination will be handled by limiting results
+      // Backend doesn't support offset in filter_metadata
     };
   }, [searchState]);
 

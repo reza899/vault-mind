@@ -77,10 +77,11 @@ const VaultConfigurationPage: React.FC = () => {
         alert(`Vault "${response.data.vault_name}" configuration created! Job ID: ${response.data.job_id}`);
         setStep('form');
       }
-    } catch (error: any) {
-      console.error('Failed to create vault configuration:', error);
+    } catch (error) {
+      const err = error as Error;
+      console.error('Failed to create vault configuration:', err);
       setSubmitError(
-        error.message || 'Failed to create vault configuration. Please try again.'
+        err.message || 'Failed to create vault configuration. Please try again.'
       );
     } finally {
       setIsSubmitting(false);

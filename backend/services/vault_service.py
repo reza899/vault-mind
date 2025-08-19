@@ -14,6 +14,8 @@ from database import VaultDatabase, EmbeddingService
 from indexer.enhanced_parser import EnhancedMarkdownParser
 from indexer.text_chunker import TextChunker
 from indexer.file_tracker import FileChangeTracker
+from services.link_graph_manager import LinkGraphManager
+from services.metadata_enhancer import MetadataEnhancer
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,8 @@ class VaultService:
         self.parser = EnhancedMarkdownParser()
         self.chunker = TextChunker()
         self.file_tracker = FileChangeTracker()
+        self.link_graph = LinkGraphManager()
+        self.metadata_enhancer = MetadataEnhancer()
         
         # Active jobs tracking
         self.active_jobs: Dict[str, IndexingJob] = {}
@@ -203,8 +207,8 @@ class VaultService:
                     
                     # Process each chunk
                     for chunk_idx, chunk in enumerate(chunks):
-                        # Prepare document metadata
-                        doc_metadata = {
+                        # Prepare base document metadata
+                        base_metadata = {
                             'file_path': str(file_path),
                             'vault_name': job.vault_name,
                             'chunk_index': chunk_idx,
@@ -215,6 +219,12 @@ class VaultService:
                             'end_char': chunk.get('end_char', 0),
                             **parsed_data['metadata']
                         }
+                        
+                        # Enhance metadata for better storage and search
+                        doc_metadata = self.metadata_enhancer.enhance_metadata(
+                            base_metadata, 
+                            chunk['text']
+                        )
                         
                         # Generate unique ID
                         doc_id = f"{job.vault_name}_{file_path.stem}_{chunk_idx}"
@@ -258,6 +268,9 @@ class VaultService:
                 await self._process_document_batch(
                     collection, all_documents, all_metadatas, all_ids
                 )
+            
+            # Build link graph after all documents are processed
+            await self._build_vault_link_graph(job.vault_name, collection)
             
             # Mark job as completed
             job.status = "completed"
@@ -312,14 +325,12 @@ class VaultService:
         # Generate embeddings
         embeddings = await self.embedding_service.encode_texts(documents)
         
-        # Sanitize metadata to ensure ChromaDB compatibility
-        sanitized_metadatas = self._sanitize_metadatas(metadatas)
-        
+        # Metadata is already enhanced and sanitized by MetadataEnhancer
         # Store in ChromaDB
         collection.add(
             documents=documents,
             embeddings=embeddings,
-            metadatas=sanitized_metadatas,
+            metadatas=metadatas,
             ids=ids
         )
     
@@ -329,7 +340,8 @@ class VaultService:
         query: str,
         limit: int = 10,
         similarity_threshold: float = 0.7,
-        include_context: bool = True
+        include_context: bool = True,
+        tag_filters: Optional[Dict[str, List[str]]] = None
     ) -> Dict[str, Any]:
         """
         Search vault with semantic similarity.
@@ -340,6 +352,7 @@ class VaultService:
             limit: Maximum results
             similarity_threshold: Minimum similarity score
             include_context: Include surrounding context
+            tag_filters: Optional tag filtering dict with 'include_tags' and 'exclude_tags' lists
             
         Returns:
             Search results with metadata
@@ -369,6 +382,10 @@ class VaultService:
             similarity_score = 1 - distance  # Convert distance to similarity
             
             if similarity_score >= similarity_threshold:
+                # Apply tag filtering if specified
+                if tag_filters and not self._matches_tag_filters(metadata, tag_filters):
+                    continue
+                    
                 result = {
                     'id': results['ids'][0][i],
                     'content': doc,
@@ -397,6 +414,83 @@ class VaultService:
             'vault_info': vault_info
         }
     
+    def _matches_tag_filters(self, metadata: Dict[str, Any], tag_filters: Dict[str, List[str]]) -> bool:
+        """Check if document metadata matches tag filtering criteria."""
+        content_tags = metadata.get('content_tags', [])
+        frontmatter_tags = metadata.get('tags', [])  # From frontmatter
+        
+        # Combine all tags from the document
+        all_tags = list(set(content_tags + frontmatter_tags))
+        
+        # Check include tags (document must have at least one of these tags)
+        include_tags = tag_filters.get('include_tags', [])
+        if include_tags:
+            has_included_tag = any(
+                any(tag.lower().startswith(filter_tag.lower()) or filter_tag.lower() in tag.lower() 
+                    for tag in all_tags)
+                for filter_tag in include_tags
+            )
+            if not has_included_tag:
+                return False
+        
+        # Check exclude tags (document must not have any of these tags)
+        exclude_tags = tag_filters.get('exclude_tags', [])
+        if exclude_tags:
+            has_excluded_tag = any(
+                any(tag.lower().startswith(filter_tag.lower()) or filter_tag.lower() in tag.lower() 
+                    for tag in all_tags)
+                for filter_tag in exclude_tags
+            )
+            if has_excluded_tag:
+                return False
+        
+        return True
+    
+    async def get_vault_tags(self, vault_name: str, limit: int = 100) -> Dict[str, Any]:
+        """Get all tags from a vault with usage frequency."""
+        # Get vault collection
+        collection = await self.database.get_vault_collection(vault_name)
+        
+        # Get all documents with metadata
+        all_docs = collection.get(include=['metadatas'])
+        
+        # Count tag frequencies
+        tag_counts = {}
+        tag_types = {}  # Track whether tag is from content or frontmatter
+        
+        for metadata in all_docs['metadatas']:
+            # Process content tags (hashtags)
+            content_tags = metadata.get('content_tags', [])
+            for tag in content_tags:
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+                tag_types[tag] = 'content'
+            
+            # Process frontmatter tags
+            frontmatter_tags = metadata.get('tags', [])
+            if isinstance(frontmatter_tags, list):
+                for tag in frontmatter_tags:
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+                    if tag not in tag_types:  # Content tags take precedence
+                        tag_types[tag] = 'frontmatter'
+        
+        # Sort tags by frequency and limit results
+        sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+        
+        # Format results
+        tags = [
+            {
+                'name': tag,
+                'frequency': count,
+                'type': tag_types.get(tag, 'unknown')
+            }
+            for tag, count in sorted_tags
+        ]
+        
+        return {
+            'tags': tags,
+            'total_tags': len(tag_counts)
+        }
+    
     async def _get_context(
         self, 
         collection, 
@@ -420,7 +514,7 @@ class VaultService:
                 prev_result = collection.get(ids=[prev_id], include=['documents'])
                 if prev_result['documents']:
                     context['before'] = prev_result['documents'][0][:200] + "..."
-            except:
+            except Exception:
                 pass
             
             # Get next chunk  
@@ -429,7 +523,7 @@ class VaultService:
                 next_result = collection.get(ids=[next_id], include=['documents'])
                 if next_result['documents']:
                     context['after'] = "..." + next_result['documents'][0][-200:]
-            except:
+            except Exception:
                 pass
             
             return context if context else None
@@ -549,6 +643,649 @@ class VaultService:
         if not path.is_dir():
             raise ValueError(f"Vault path is not a directory: {vault_path}")
     
+    async def _build_vault_link_graph(self, vault_name: str, collection) -> None:
+        """Build the link graph for a vault using collected metadata."""
+        try:
+            logger.info(f"Building link graph for vault '{vault_name}'")
+            
+            # Get all documents with metadata from the collection
+            all_docs = collection.get(include=['metadatas'])
+            
+            if not all_docs or not all_docs['metadatas']:
+                logger.warning(f"No documents found for link graph building in vault '{vault_name}'")
+                return
+            
+            # Collect unique document metadata (one per file)
+            documents_metadata = []
+            processed_files = set()
+            
+            for metadata in all_docs['metadatas']:
+                # Ensure metadata is a dictionary and not None or string
+                if not isinstance(metadata, dict):
+                    continue
+                    
+                file_path = metadata.get('file_path')
+                if file_path and file_path not in processed_files:
+                    # Only include metadata with link information
+                    if metadata.get('links'):
+                        documents_metadata.append(metadata)
+                        processed_files.add(file_path)
+            
+            if not documents_metadata:
+                logger.warning(f"No documents with link metadata found in vault '{vault_name}'")
+                return
+            
+            # Build the graph using LinkGraphManager
+            self.link_graph.build_vault_graph(vault_name, documents_metadata)
+            
+            logger.info(f"Successfully built link graph for vault '{vault_name}' with {len(documents_metadata)} documents")
+            
+        except Exception as e:
+            logger.error(f"Failed to build link graph for vault '{vault_name}': {e}")
+    
+    async def get_vault_link_graph_stats(self, vault_name: str) -> Dict[str, Any]:
+        """Get link graph statistics for a vault."""
+        return self.link_graph.get_graph_stats(vault_name)
+    
+    async def get_vault_backlinks(self, vault_name: str, note_name: str) -> List[Dict[str, Any]]:
+        """Get backlinks for a specific note in a vault."""
+        return self.link_graph.get_backlinks(vault_name, note_name)
+    
+    async def get_vault_outgoing_links(self, vault_name: str, note_name: str) -> List[Dict[str, Any]]:
+        """Get outgoing links for a specific note in a vault."""
+        return self.link_graph.get_outgoing_links(vault_name, note_name)
+    
+    async def get_connected_notes(self, vault_name: str, note_name: str, max_distance: int = 2) -> Dict[str, Any]:
+        """Get notes connected to a specific note within the given distance."""
+        return self.link_graph.get_connected_notes(vault_name, note_name, max_distance)
+    
+    async def get_most_linked_notes(self, vault_name: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get the most linked notes in a vault."""
+        return self.link_graph.get_most_linked_notes(vault_name, limit)
+    
+    async def get_hub_notes(self, vault_name: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get hub notes (notes with most outgoing links) in a vault."""
+        return self.link_graph.get_hub_notes(vault_name, limit)
+    
+    async def find_orphan_notes(self, vault_name: str) -> List[str]:
+        """Find orphan notes (notes with no links) in a vault."""
+        return self.link_graph.find_orphan_notes(vault_name)
+    
+    async def get_link_suggestions(self, vault_name: str, note_name: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Get link suggestions for a note based on graph analysis."""
+        return self.link_graph.get_link_suggestions(vault_name, note_name, limit)
+    
+    async def incremental_update(
+        self, 
+        vault_name: str, 
+        changes: Dict[str, List[str]]
+    ) -> Dict[str, Any]:
+        """
+        Perform incremental update based on file changes.
+        
+        Args:
+            vault_name: Target vault name
+            changes: Dict with 'added', 'modified', 'deleted' file lists
+            
+        Returns:
+            Update statistics and results
+        """
+        try:
+            logger.info(f"Starting incremental update for vault '{vault_name}'")
+            
+            # Get vault collection
+            collection = await self.database.get_vault_collection(vault_name)
+            
+            stats = {
+                'vault_name': vault_name,
+                'files_processed': 0,
+                'documents_added': 0,
+                'documents_updated': 0,
+                'documents_deleted': 0,
+                'chunks_created': 0,
+                'chunks_updated': 0,
+                'chunks_deleted': 0,
+                'errors': [],
+                'start_time': datetime.now(),
+                'end_time': None
+            }
+            
+            # Process deletions first
+            await self._process_file_deletions(collection, vault_name, changes.get('deleted', []), stats)
+            
+            # Process additions and modifications
+            all_changed_files = changes.get('added', []) + changes.get('modified', [])
+            await self._process_file_updates(collection, vault_name, all_changed_files, stats)
+            
+            # Rebuild link graph if any files changed
+            if any(changes.values()):
+                await self._build_vault_link_graph(vault_name, collection)
+                logger.info(f"Rebuilt link graph for vault '{vault_name}'")
+            
+            stats['end_time'] = datetime.now()
+            stats['duration_seconds'] = (stats['end_time'] - stats['start_time']).total_seconds()
+            
+            logger.info(f"Incremental update completed for vault '{vault_name}': "
+                       f"{stats['files_processed']} files, "
+                       f"{stats['documents_added']} docs added, "
+                       f"{stats['documents_updated']} docs updated, "
+                       f"{stats['documents_deleted']} docs deleted")
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Incremental update failed for vault '{vault_name}': {e}")
+            raise
+    
+    async def _process_file_deletions(
+        self, 
+        collection, 
+        vault_name: str, 
+        deleted_files: List[str], 
+        stats: Dict[str, Any]
+    ) -> None:
+        """Process file deletions by removing associated documents."""
+        for file_path in deleted_files:
+            try:
+                # Find all document IDs for this file
+                file_docs = collection.get(
+                    where={"file_path": file_path},
+                    include=['ids']
+                )
+                
+                if file_docs and file_docs['ids']:
+                    # Delete all chunks for this file
+                    collection.delete(ids=file_docs['ids'])
+                    
+                    stats['documents_deleted'] += 1
+                    stats['chunks_deleted'] += len(file_docs['ids'])
+                    
+                    logger.debug(f"Deleted {len(file_docs['ids'])} chunks for file: {file_path}")
+                
+            except Exception as e:
+                error_msg = f"Error deleting file {file_path}: {e}"
+                logger.error(error_msg)
+                stats['errors'].append(error_msg)
+    
+    async def _process_file_updates(
+        self, 
+        collection, 
+        vault_name: str, 
+        changed_files: List[str], 
+        stats: Dict[str, Any]
+    ) -> None:
+        """Process file additions and modifications."""
+        batch_size = 10
+        all_documents = []
+        all_metadatas = []
+        all_ids = []
+        
+        for file_path in changed_files:
+            try:
+                file_path_obj = Path(file_path)
+                
+                # Check if file still exists (might have been deleted between detection and processing)
+                if not file_path_obj.exists():
+                    logger.warning(f"File no longer exists, skipping: {file_path}")
+                    continue
+                
+                # Check if this is a modification (file already indexed)
+                existing_docs = collection.get(
+                    where={"file_path": file_path},
+                    include=['ids']
+                )
+                
+                is_modification = bool(existing_docs and existing_docs['ids'])
+                
+                if is_modification:
+                    # Delete existing chunks for this file
+                    collection.delete(ids=existing_docs['ids'])
+                    stats['chunks_deleted'] += len(existing_docs['ids'])
+                    logger.debug(f"Removed {len(existing_docs['ids'])} existing chunks for: {file_path}")
+                
+                # Parse the file
+                parsed_data = self.parser.parse_file(file_path_obj)
+                
+                # Chunk the content
+                chunks = self.chunker.chunk_text(parsed_data['content'])
+                
+                # Process each chunk
+                for chunk_idx, chunk in enumerate(chunks):
+                    # Prepare base document metadata
+                    base_metadata = {
+                        'file_path': str(file_path_obj),
+                        'vault_name': vault_name,
+                        'chunk_index': chunk_idx,
+                        'total_chunks': len(chunks),
+                        'chunk_type': 'text',
+                        'indexed_at': datetime.now().isoformat(),
+                        'start_char': chunk.get('start_char', 0),
+                        'end_char': chunk.get('end_char', 0),
+                        **parsed_data['metadata']
+                    }
+                    
+                    # Enhance metadata for better storage and search
+                    doc_metadata = self.metadata_enhancer.enhance_metadata(
+                        base_metadata, 
+                        chunk['text']
+                    )
+                    
+                    # Generate unique ID
+                    doc_id = f"{vault_name}_{file_path_obj.stem}_{chunk_idx}"
+                    
+                    all_documents.append(chunk['text'])
+                    all_metadatas.append(doc_metadata)
+                    all_ids.append(doc_id)
+                    stats['chunks_created'] += 1
+                
+                # Update statistics
+                if is_modification:
+                    stats['documents_updated'] += 1
+                else:
+                    stats['documents_added'] += 1
+                
+                stats['files_processed'] += 1
+                
+                # Process batch if reached batch size
+                if len(all_documents) >= batch_size:
+                    await self._process_document_batch(
+                        collection, all_documents, all_metadatas, all_ids
+                    )
+                    all_documents.clear()
+                    all_metadatas.clear()
+                    all_ids.clear()
+                
+            except Exception as e:
+                error_msg = f"Error processing file {file_path}: {e}"
+                logger.error(error_msg)
+                stats['errors'].append(error_msg)
+        
+        # Process remaining documents
+        if all_documents:
+            await self._process_document_batch(
+                collection, all_documents, all_metadatas, all_ids
+            )
+    
+    async def setup_incremental_updates(self, vault_name: str, vault_path: str) -> None:
+        """
+        Set up incremental updates for a vault using the file change service.
+        This connects the file change detection to automatic incremental updates.
+        """
+        try:
+            # Import here to avoid circular dependency
+            from services.file_change_service import get_file_change_service
+            
+            file_change_service = get_file_change_service()
+            
+            # Add vault to file change monitoring
+            await file_change_service.add_vault_watch(
+                vault_name=vault_name,
+                vault_path=vault_path,
+                enabled=True,
+                check_interval=300,  # 5 minutes
+                debounce_delay=2.0   # 2 seconds
+            )
+            
+            # Add callback for this vault's changes
+            async def handle_vault_changes(events):
+                """Handle file change events for this vault."""
+                vault_events = [e for e in events if e.vault_name == vault_name]
+                if not vault_events:
+                    return
+                
+                # Group events by type
+                changes = {
+                    'added': [],
+                    'modified': [],
+                    'deleted': []
+                }
+                
+                for event in vault_events:
+                    if event.event_type in ['created']:
+                        changes['added'].append(event.file_path)
+                    elif event.event_type in ['modified']:
+                        changes['modified'].append(event.file_path)
+                    elif event.event_type in ['deleted']:
+                        changes['deleted'].append(event.file_path)
+                    elif event.event_type in ['moved']:
+                        # Handle moves as delete old + add new
+                        if event.old_path:
+                            changes['deleted'].append(event.old_path)
+                        changes['added'].append(event.file_path)
+                
+                # Remove duplicates
+                for key in changes:
+                    changes[key] = list(set(changes[key]))
+                
+                # Only process if there are actual changes
+                total_changes = sum(len(files) for files in changes.values())
+                if total_changes > 0:
+                    logger.info(f"Processing {total_changes} file changes for vault '{vault_name}'")
+                    try:
+                        await self.incremental_update(vault_name, changes)
+                    except Exception as e:
+                        logger.error(f"Failed to process incremental update for vault '{vault_name}': {e}")
+            
+            file_change_service.add_change_callback(handle_vault_changes)
+            
+            logger.info(f"Set up incremental updates for vault '{vault_name}'")
+            
+        except Exception as e:
+            logger.error(f"Failed to setup incremental updates for vault '{vault_name}': {e}")
+            raise
+
+    async def get_vault_metadata_stats(self, vault_name: str) -> Dict[str, Any]:
+        """Get comprehensive metadata statistics for a vault."""
+        try:
+            collection = await self.database.get_vault_collection(vault_name)
+            
+            # Get all documents with metadata
+            all_docs = collection.get(include=['metadatas'])
+            
+            if not all_docs or not all_docs['metadatas']:
+                return {
+                    'vault_name': vault_name,
+                    'total_documents': 0,
+                    'metadata_fields': {},
+                    'content_types': {},
+                    'file_extensions': {},
+                    'error': 'No documents found'
+                }
+            
+            metadatas = all_docs['metadatas']
+            
+            # Analyze metadata
+            field_counts = {}
+            content_types = {}
+            file_extensions = {}
+            content_sizes = {'small': 0, 'medium': 0, 'large': 0}
+            features = {}
+            
+            for metadata in metadatas:
+                # Count fields
+                for field in metadata.keys():
+                    field_counts[field] = field_counts.get(field, 0) + 1
+                
+                # Count content types
+                content_type = metadata.get('content_type', 'unknown')
+                content_types[content_type] = content_types.get(content_type, 0) + 1
+                
+                # Count file extensions
+                file_ext = metadata.get('file_extension', 'unknown')
+                file_extensions[file_ext] = file_extensions.get(file_ext, 0) + 1
+                
+                # Count content sizes
+                content_size = metadata.get('content_size', 'unknown')
+                if content_size in content_sizes:
+                    content_sizes[content_size] += 1
+                
+                # Count features
+                content_features = metadata.get('content_features', '')
+                if content_features:
+                    for feature in content_features.split(', '):
+                        features[feature] = features.get(feature, 0) + 1
+            
+            return {
+                'vault_name': vault_name,
+                'total_documents': len(metadatas),
+                'metadata_fields': dict(sorted(field_counts.items(), key=lambda x: x[1], reverse=True)),
+                'content_types': dict(sorted(content_types.items(), key=lambda x: x[1], reverse=True)),
+                'file_extensions': dict(sorted(file_extensions.items(), key=lambda x: x[1], reverse=True)),
+                'content_sizes': content_sizes,
+                'content_features': dict(sorted(features.items(), key=lambda x: x[1], reverse=True)),
+                'metadata_version': '2.0'
+            }
+            
+        except ValueError as e:
+            raise e
+        except Exception as e:
+            logger.error(f"Failed to get metadata stats for vault '{vault_name}': {e}")
+            raise
+    
+    async def search_vault_by_metadata(
+        self, 
+        vault_name: str,
+        metadata_filters: Dict[str, Any],
+        limit: int = 10
+    ) -> Dict[str, Any]:
+        """
+        Search vault using enhanced metadata filtering.
+        
+        Args:
+            vault_name: Target vault name
+            metadata_filters: Metadata-based filters
+            limit: Maximum results
+            
+        Returns:
+            Search results with metadata focus
+        """
+        try:
+            start_time = time.time()
+            
+            # Get vault collection
+            collection = await self.database.get_vault_collection(vault_name)
+            
+            # Perform metadata-based search
+            results = collection.get(
+                where=metadata_filters,
+                limit=limit,
+                include=['documents', 'metadatas', 'ids']
+            )
+            
+            # Process results
+            processed_results = []
+            if results and results['documents']:
+                for i, (doc, metadata) in enumerate(zip(results['documents'], results['metadatas'])):
+                    result = {
+                        'id': results['ids'][i],
+                        'content': doc,
+                        'metadata': metadata,
+                        'enhanced_metadata': {
+                            'content_type': metadata.get('content_type', 'unknown'),
+                            'content_size': metadata.get('content_size', 'unknown'),
+                            'content_features': metadata.get('content_features', ''),
+                            'metadata_richness': metadata.get('metadata_richness', 0),
+                            'content_preview': metadata.get('content_preview', '')
+                        }
+                    }
+                    processed_results.append(result)
+            
+            search_time_ms = (time.time() - start_time) * 1000
+            
+            return {
+                'results': processed_results,
+                'total_found': len(processed_results),
+                'search_time_ms': search_time_ms,
+                'filters_applied': metadata_filters,
+                'vault_name': vault_name
+            }
+            
+        except ValueError as e:
+            raise e
+        except Exception as e:
+            logger.error(f"Metadata search failed for vault '{vault_name}': {e}")
+            raise
+    
+    async def get_vault_content_analysis(self, vault_name: str) -> Dict[str, Any]:
+        """Get detailed content analysis for a vault using enhanced metadata."""
+        try:
+            collection = await self.database.get_vault_collection(vault_name)
+            
+            # Get all documents with metadata
+            all_docs = collection.get(include=['metadatas'])
+            
+            if not all_docs or not all_docs['metadatas']:
+                return {
+                    'vault_name': vault_name,
+                    'analysis': 'No documents found for analysis'
+                }
+            
+            metadatas = all_docs['metadatas']
+            
+            # Analyze content patterns
+            analysis = {
+                'vault_name': vault_name,
+                'total_documents': len(metadatas),
+                'content_analysis': {},
+                'writing_patterns': {},
+                'document_purposes': {},
+                'complexity_metrics': {}
+            }
+            
+            # Content type distribution
+            content_types = {}
+            document_purposes = {}
+            total_words = 0
+            total_chars = 0
+            feature_usage = {}
+            
+            for metadata in metadatas:
+                # Content types
+                content_type = metadata.get('content_type', 'unknown')
+                content_types[content_type] = content_types.get(content_type, 0) + 1
+                
+                # Document purposes
+                purpose = metadata.get('document_purpose', 'unknown')
+                document_purposes[purpose] = document_purposes.get(purpose, 0) + 1
+                
+                # Aggregate metrics
+                word_count = metadata.get('word_count', 0)
+                char_count = metadata.get('char_count', 0)
+                if isinstance(word_count, (int, float)):
+                    total_words += word_count
+                if isinstance(char_count, (int, float)):
+                    total_chars += char_count
+                
+                # Feature usage
+                features = metadata.get('content_features', '')
+                if features:
+                    for feature in features.split(', '):
+                        feature_usage[feature] = feature_usage.get(feature, 0) + 1
+            
+            analysis['content_analysis'] = {
+                'content_types': content_types,
+                'total_words': total_words,
+                'total_characters': total_chars,
+                'avg_words_per_doc': round(total_words / len(metadatas), 2) if metadatas else 0,
+                'feature_usage': feature_usage
+            }
+            
+            analysis['document_purposes'] = document_purposes
+            analysis['writing_patterns'] = self._analyze_writing_patterns(metadatas)
+            analysis['complexity_metrics'] = self._analyze_complexity_metrics(metadatas)
+            
+            return analysis
+            
+        except ValueError as e:
+            raise e
+        except Exception as e:
+            logger.error(f"Content analysis failed for vault '{vault_name}': {e}")
+            raise
+    
+    def _analyze_writing_patterns(self, metadatas: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Analyze writing patterns from metadata."""
+        patterns = {
+            'avg_word_length': 0,
+            'structure_usage': {},
+            'link_density_avg': 0,
+            'document_complexity': {}
+        }
+        
+        total_avg_word_length = 0
+        total_link_density = 0
+        structure_counts = {}
+        complexity_scores = []
+        
+        valid_docs = 0
+        
+        for metadata in metadatas:
+            # Average word length
+            avg_word_length = metadata.get('avg_word_length', 0)
+            if isinstance(avg_word_length, (int, float)) and avg_word_length > 0:
+                total_avg_word_length += avg_word_length
+                valid_docs += 1
+            
+            # Link density
+            link_density = metadata.get('link_density', 0)
+            if isinstance(link_density, (int, float)):
+                total_link_density += link_density
+            
+            # Structure elements
+            if metadata.get('has_tables'):
+                structure_counts['tables'] = structure_counts.get('tables', 0) + 1
+            if metadata.get('has_lists'):
+                structure_counts['lists'] = structure_counts.get('lists', 0) + 1
+            if metadata.get('has_code_patterns'):
+                structure_counts['code'] = structure_counts.get('code', 0) + 1
+            if metadata.get('has_math_patterns'):
+                structure_counts['math'] = structure_counts.get('math', 0) + 1
+            
+            # Complexity score (based on metadata richness)
+            richness = metadata.get('metadata_richness', 0)
+            if isinstance(richness, (int, float)):
+                complexity_scores.append(richness)
+        
+        if valid_docs > 0:
+            patterns['avg_word_length'] = round(total_avg_word_length / valid_docs, 2)
+        
+        if metadatas:
+            patterns['link_density_avg'] = round(total_link_density / len(metadatas), 3)
+        
+        patterns['structure_usage'] = structure_counts
+        
+        if complexity_scores:
+            patterns['document_complexity'] = {
+                'avg_complexity': round(sum(complexity_scores) / len(complexity_scores), 2),
+                'min_complexity': min(complexity_scores),
+                'max_complexity': max(complexity_scores)
+            }
+        
+        return patterns
+    
+    def _analyze_complexity_metrics(self, metadatas: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Analyze document complexity metrics."""
+        metrics = {
+            'size_distribution': {'small': 0, 'medium': 0, 'large': 0},
+            'feature_complexity': {},
+            'structural_complexity': {}
+        }
+        
+        # Size distribution
+        for metadata in metadatas:
+            content_size = metadata.get('content_size', 'unknown')
+            if content_size in metrics['size_distribution']:
+                metrics['size_distribution'][content_size] += 1
+        
+        # Feature complexity (documents with multiple features)
+        feature_complexity_counts = {}
+        for metadata in metadatas:
+            features = metadata.get('content_features', '')
+            if features:
+                feature_count = len(features.split(', '))
+                feature_complexity_counts[feature_count] = feature_complexity_counts.get(feature_count, 0) + 1
+        
+        metrics['feature_complexity'] = feature_complexity_counts
+        
+        # Structural complexity (based on headings, sections, etc.)
+        heading_counts = {}
+        for metadata in metadatas:
+            # This would need to be enhanced based on actual structure metadata
+            # For now, using a simple approximation
+            word_count = metadata.get('word_count', 0)
+            if isinstance(word_count, (int, float)):
+                if word_count > 1000:
+                    complexity = 'high'
+                elif word_count > 300:
+                    complexity = 'medium'
+                else:
+                    complexity = 'low'
+                
+                heading_counts[complexity] = heading_counts.get(complexity, 0) + 1
+        
+        metrics['structural_complexity'] = heading_counts
+        
+        return metrics
+
     async def health_check(self) -> Dict[str, Any]:
         """Service health check."""
         try:
@@ -564,7 +1301,9 @@ class VaultService:
                 'components': {
                     'parser': 'healthy',
                     'chunker': 'healthy', 
-                    'file_tracker': 'healthy'
+                    'file_tracker': 'healthy',
+                    'link_graph': 'healthy',
+                    'metadata_enhancer': 'healthy'
                 }
             }
         except Exception as e:

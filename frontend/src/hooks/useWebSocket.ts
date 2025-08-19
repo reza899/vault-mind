@@ -59,7 +59,7 @@ const useWebSocket = (options: WebSocketOptions = {}): UseWebSocketReturn => {
       reconnectAttempts.current += 1;
       connectWebSocket();
     }, delay);
-  }, [reconnectInterval, reconnectDecay, maxReconnectInterval, maxReconnectAttempts]);
+  }, [reconnectInterval, reconnectDecay, maxReconnectInterval, maxReconnectAttempts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const connectWebSocket = useCallback(() => {
     if (ws.current?.readyState === WebSocket.OPEN) {

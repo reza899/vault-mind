@@ -1,6 +1,7 @@
 import React from 'react';
 import { ChevronDownIcon, FolderIcon } from '@heroicons/react/24/outline';
 import { useVaultConfigStore } from '@/stores/vaultConfigStore';
+import { useVaultStatus } from '@/hooks/useVaultStatus';
 
 interface VaultSelectorProps {
   selectedVault: string;
@@ -16,11 +17,25 @@ export const VaultSelector: React.FC<VaultSelectorProps> = ({
   className = "",
 }) => {
   const { recentConfigs } = useVaultConfigStore();
+  const [{ collections }] = useVaultStatus({ refreshInterval: 30000, enabled: true });
 
-  // Get unique vault configurations
-  const availableVaults = Array.from(
-    new Map(recentConfigs.map(config => [config.vault_name, config])).values()
+  // Convert collections to vault config format for compatibility
+  const collectionsAsConfigs = collections.map(collection => ({
+    vault_name: collection.collection_name,
+    vault_path: collection.vault_path,
+    description: collection.description,
+  }));
+
+  // Combine recent configs with actual collections, prioritizing actual collections
+  const collectionNames = new Set(collections.map(c => c.collection_name));
+  const validRecentConfigs = recentConfigs.filter(config => 
+    collectionNames.has(config.vault_name)
   );
+
+  // Use actual collections as the source of truth
+  const availableVaults = collectionsAsConfigs.length > 0 
+    ? collectionsAsConfigs 
+    : validRecentConfigs;
 
   if (availableVaults.length === 0) {
     return (
@@ -32,7 +47,7 @@ export const VaultSelector: React.FC<VaultSelectorProps> = ({
           </div>
         </div>
         <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          Configure a vault first to enable search
+          Create a vault collection first to enable search
         </div>
       </div>
     );

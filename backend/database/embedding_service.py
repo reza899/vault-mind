@@ -18,14 +18,16 @@ class EmbeddingService:
     Reduces complexity while maintaining all functionality.
     """
     
-    def __init__(self, provider_type: Optional[EmbeddingProvider] = None):
+    def __init__(self, provider_type: Optional[EmbeddingProvider] = None, shared_provider=None):
         """
         Initialize embedding service.
         
         Args:
             provider_type: Embedding provider type (uses config default if None)
+            shared_provider: Shared provider instance to avoid conflicts
         """
         self.provider_type = provider_type or config.embedding_provider
+        self.shared_provider = shared_provider
         self.provider = self._create_provider()
         self._metrics = {
             'total_requests': 0,
@@ -39,6 +41,9 @@ class EmbeddingService:
     def _create_provider(self):
         """Create provider based on configuration using strategy pattern."""
         if self.provider_type == EmbeddingProvider.CHROMADB:
+            # Use shared provider if available to avoid conflicts
+            if self.shared_provider:
+                return self.shared_provider
             return ChromaDBProvider(model_name=config.embedding_model)
         
         elif self.provider_type == EmbeddingProvider.OPENAI:

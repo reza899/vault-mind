@@ -3,9 +3,7 @@ Integration tests for Vault Mind API.
 Tests complete API functionality with real service integration.
 """
 import pytest
-import asyncio
 import tempfile
-import shutil
 from pathlib import Path
 from fastapi.testclient import TestClient
 
@@ -91,7 +89,7 @@ class TestHealthEndpoints:
     
     def test_status_health_endpoint(self, test_client):
         """Test status/health endpoint."""
-        response = test_client.get("/status/health")
+        response = test_client.get("/api/status/health")
         
         assert response.status_code == 200
         data = response.json()
@@ -105,7 +103,7 @@ class TestIndexingEndpoints:
     
     def test_index_vault_invalid_path(self, test_client):
         """Test indexing with invalid vault path."""
-        response = test_client.post("/index", json={
+        response = test_client.post("/api/index", json={
             "vault_name": "test_vault",
             "vault_path": "/nonexistent/path",
             "description": "Test vault"
@@ -117,7 +115,7 @@ class TestIndexingEndpoints:
     
     def test_index_vault_invalid_name(self, test_client):
         """Test indexing with invalid vault name."""
-        response = test_client.post("/index", json={
+        response = test_client.post("/api/index", json={
             "vault_name": "invalid/name",
             "vault_path": "/tmp",
             "description": "Test vault"
@@ -127,7 +125,7 @@ class TestIndexingEndpoints:
     
     def test_index_vault_success(self, test_client, test_vault):
         """Test successful vault indexing."""
-        response = test_client.post("/index", json={
+        response = test_client.post("/api/index", json={
             "vault_name": "test_vault",
             "vault_path": test_vault,
             "description": "Test vault for integration tests"
@@ -145,7 +143,7 @@ class TestIndexingEndpoints:
     def test_get_job_status(self, test_client, test_vault):
         """Test getting job status."""
         # First create a job
-        response = test_client.post("/index", json={
+        response = test_client.post("/api/index", json={
             "vault_name": "test_vault_2",
             "vault_path": test_vault,
         })
@@ -154,7 +152,7 @@ class TestIndexingEndpoints:
         job_id = response.json()["data"]["job_id"]
         
         # Get job status
-        response = test_client.get(f"/index/job/{job_id}")
+        response = test_client.get(f"/api/index/job/{job_id}")
         
         assert response.status_code == 200
         data = response.json()
@@ -165,14 +163,14 @@ class TestIndexingEndpoints:
     
     def test_get_job_status_not_found(self, test_client):
         """Test getting status for nonexistent job."""
-        response = test_client.get("/index/job/nonexistent-job-id")
+        response = test_client.get("/api/index/job/nonexistent-job-id")
         
         assert response.status_code == 404
         assert "not found" in response.json()["detail"]
     
     def test_get_all_jobs(self, test_client):
         """Test getting all jobs."""
-        response = test_client.get("/index/jobs")
+        response = test_client.get("/api/index/jobs")
         
         assert response.status_code == 200
         data = response.json()
@@ -189,13 +187,13 @@ class TestSearchEndpoints:
     def setup_indexed_vault(self, test_client, test_vault):
         """Set up an indexed vault for search tests."""
         # Index a vault first
-        response = test_client.post("/index", json={
+        response = test_client.post("/api/index", json={
             "vault_name": "search_test_vault",
             "vault_path": test_vault,
         })
         
         assert response.status_code == 200
-        job_id = response.json()["data"]["job_id"]
+        # job_id = response.json()["data"]["job_id"]  # Reserved for future validation
         
         # Wait a moment for indexing to start
         import time
@@ -205,7 +203,7 @@ class TestSearchEndpoints:
     
     def test_search_vault_get(self, test_client):
         """Test search using GET endpoint."""
-        response = test_client.get("/search", params={
+        response = test_client.get("/api/search", params={
             "vault_name": self.vault_name,
             "query": "artificial intelligence",
             "limit": 5
@@ -226,7 +224,7 @@ class TestSearchEndpoints:
     
     def test_search_vault_post(self, test_client):
         """Test search using POST endpoint."""
-        response = test_client.post("/search", json={
+        response = test_client.post("/api/search", json={
             "vault_name": self.vault_name,
             "query": "machine learning",
             "limit": 3,
@@ -244,7 +242,7 @@ class TestSearchEndpoints:
     
     def test_search_invalid_vault(self, test_client):
         """Test search with nonexistent vault."""
-        response = test_client.get("/search", params={
+        response = test_client.get("/api/search", params={
             "vault_name": "nonexistent_vault",
             "query": "test query"
         })
@@ -254,7 +252,7 @@ class TestSearchEndpoints:
     
     def test_search_empty_query(self, test_client):
         """Test search with empty query."""
-        response = test_client.get("/search", params={
+        response = test_client.get("/api/search", params={
             "vault_name": self.vault_name,
             "query": ""
         })
@@ -263,7 +261,7 @@ class TestSearchEndpoints:
     
     def test_search_collections(self, test_client):
         """Test listing searchable collections."""
-        response = test_client.get("/search/collections")
+        response = test_client.get("/api/search/collections")
         
         assert response.status_code == 200
         data = response.json()
@@ -278,7 +276,7 @@ class TestStatusEndpoints:
     
     def test_system_status(self, test_client):
         """Test system status endpoint."""
-        response = test_client.get("/status")
+        response = test_client.get("/api/status")
         
         assert response.status_code == 200
         data = response.json()
@@ -291,7 +289,7 @@ class TestStatusEndpoints:
     
     def test_system_status_post(self, test_client):
         """Test system status POST endpoint."""
-        response = test_client.post("/status", json={
+        response = test_client.post("/api/status", json={
             "include_metrics": True
         })
         
@@ -303,7 +301,7 @@ class TestStatusEndpoints:
     
     def test_status_metrics(self, test_client):
         """Test performance metrics endpoint."""
-        response = test_client.get("/status/metrics")
+        response = test_client.get("/api/status/metrics")
         
         assert response.status_code == 200
         data = response.json()
@@ -328,9 +326,9 @@ class TestAPIDocumentation:
         
         # Check that our endpoints are documented
         paths = schema["paths"]
-        assert "/index" in paths
-        assert "/search" in paths
-        assert "/status" in paths
+        assert "/api/index" in paths
+        assert "/api/search" in paths
+        assert "/api/status" in paths
         assert "/health" in paths
     
     def test_docs_endpoint(self, test_client):
@@ -365,7 +363,7 @@ class TestErrorHandling:
     
     def test_invalid_json(self, test_client):
         """Test sending invalid JSON."""
-        response = test_client.post("/index", 
+        response = test_client.post("/api/index", 
                                   data="invalid json",
                                   headers={"Content-Type": "application/json"})
         
@@ -373,7 +371,7 @@ class TestErrorHandling:
     
     def test_missing_required_fields(self, test_client):
         """Test missing required fields in request."""
-        response = test_client.post("/index", json={
+        response = test_client.post("/api/index", json={
             "vault_name": "test"
             # Missing vault_path
         })
@@ -416,7 +414,7 @@ class TestPerformance:
         import time
         
         start_time = time.time()
-        response = test_client.get("/status")
+        response = test_client.get("/api/status")
         end_time = time.time()
         
         assert response.status_code == 200

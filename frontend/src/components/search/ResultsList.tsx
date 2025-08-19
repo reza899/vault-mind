@@ -19,6 +19,9 @@ interface ResultsListProps {
   loading?: boolean;
   onCopy?: (content: string) => void;
   className?: string;
+  selectedResults?: Set<number>;
+  onSelectionChange?: (selectedIndexes: Set<number>) => void;
+  showSelection?: boolean;
 }
 
 export const ResultsList: React.FC<ResultsListProps> = ({
@@ -27,7 +30,22 @@ export const ResultsList: React.FC<ResultsListProps> = ({
   loading = false,
   onCopy,
   className = "",
+  selectedResults = new Set(),
+  onSelectionChange,
+  showSelection = false,
 }) => {
+  
+  const handleResultSelection = (index: number, selected: boolean) => {
+    if (!onSelectionChange) return;
+    
+    const newSelection = new Set(selectedResults);
+    if (selected) {
+      newSelection.add(index);
+    } else {
+      newSelection.delete(index);
+    }
+    onSelectionChange(newSelection);
+  };
   if (loading) {
     return (
       <div className={`space-y-4 ${className}`}>
@@ -71,6 +89,10 @@ export const ResultsList: React.FC<ResultsListProps> = ({
           result={result}
           query={query}
           onCopy={onCopy}
+          index={index}
+          isSelected={selectedResults.has(index)}
+          onSelectionChange={(selected) => handleResultSelection(index, selected)}
+          showSelection={showSelection}
         />
       ))}
     </div>

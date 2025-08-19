@@ -32,6 +32,13 @@ class EnhancedMarkdownParser(MarkdownParser):
         self.dataview_pattern = re.compile(r'```dataview(js)?\n(.*?)\n```', re.DOTALL)
         self.heading_pattern = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
         
+        # Enhanced link patterns for comprehensive link graph
+        self.wikilink_detailed_pattern = re.compile(r'\[\[([^\|\]]+)(?:\|([^\]]+))?\]\]')
+        self.markdown_link_pattern = re.compile(r'\[([^\]]+)\]\(([^)]+)\)')
+        self.url_pattern = re.compile(r'https?://[^\s\)]+')
+        self.block_reference_pattern = re.compile(r'\[\[([^\]]+)#(\^[a-zA-Z0-9-]+)\]\]')
+        self.heading_reference_pattern = re.compile(r'\[\[([^\]]+)#([^\]]+)\]\]')
+        
         # Additional excluded folders
         self.excluded_folders.update({'templates'})
     
@@ -53,6 +60,7 @@ class EnhancedMarkdownParser(MarkdownParser):
         self._extract_tables(content, metadata)
         self._extract_dataview_queries(content, metadata)
         self._extract_structure(content, metadata)
+        self._extract_enhanced_links(content, metadata, file_path)
         
         # Recalculate word count excluding metadata blocks
         self._calculate_enhanced_word_count(content, metadata)
@@ -284,3 +292,85 @@ class EnhancedMarkdownParser(MarkdownParser):
         
         words = self.word_pattern.findall(content_for_count)
         metadata['word_count'] = len(words)
+    
+    def _extract_enhanced_links(self, content: str, metadata: Dict[str, Any], file_path: Path) -> None:
+        """Extract comprehensive link information for building link graph."""
+        links = {
+            'wikilinks': [],
+            'backlinks': [],  # Will be populated during indexing
+            'markdown_links': [],
+            'external_urls': [],
+            'block_references': [],
+            'heading_references': []
+        }
+        
+        # Extract wikilinks with detailed information
+        wikilink_matches = self.wikilink_detailed_pattern.findall(content)
+        for match in wikilink_matches:
+            target, alias = match
+            target = target.strip()
+            alias = alias.strip() if alias else None
+            
+            # Handle different link types
+            if '#^' in target:  # Block reference
+                note_name, block_id = target.split('#^', 1)
+                links['block_references'].append({
+                    'target_note': note_name.strip(),
+                    'block_id': block_id.strip(),
+                    'alias': alias,
+                    'raw_text': f"[[{target}{'|' + alias if alias else ''}]]"
+                })
+            elif '#' in target:  # Heading reference
+                note_name, heading = target.split('#', 1)
+                links['heading_references'].append({
+                    'target_note': note_name.strip() if note_name else file_path.stem,
+                    'heading': heading.strip(),
+                    'alias': alias,
+                    'raw_text': f"[[{target}{'|' + alias if alias else ''}]]"
+                })
+            else:  # Regular wikilink
+                links['wikilinks'].append({
+                    'target': target,
+                    'alias': alias,
+                    'raw_text': f"[[{target}{'|' + alias if alias else ''}]]"
+                })
+        
+        # Extract markdown links
+        markdown_matches = self.markdown_link_pattern.findall(content)
+        for text, url in markdown_matches:
+            # Check if it's an internal file reference
+            if url.startswith('./') or url.endswith('.md') or '://' not in url:
+                links['markdown_links'].append({
+                    'text': text.strip(),
+                    'url': url.strip(),
+                    'type': 'internal'
+                })
+            else:
+                links['markdown_links'].append({
+                    'text': text.strip(),
+                    'url': url.strip(),
+                    'type': 'external'
+                })
+        
+        # Extract external URLs
+        url_matches = self.url_pattern.findall(content)
+        for url in url_matches:
+            # Only add if not already captured in markdown links
+            if not any(link['url'] == url for link in links['markdown_links']):
+                links['external_urls'].append(url.strip())
+        
+        # Calculate link statistics
+        link_stats = {
+            'total_outgoing_links': len(links['wikilinks']) + len(links['heading_references']) + len(links['block_references']),
+            'external_link_count': len(links['external_urls']) + len([link for link in links['markdown_links'] if link['type'] == 'external']),
+            'internal_link_count': len(links['wikilinks']) + len(links['heading_references']) + len(links['block_references']) + len([link for link in links['markdown_links'] if link['type'] == 'internal'])
+        }
+        
+        # Store in metadata
+        metadata['links'] = links
+        metadata['link_stats'] = link_stats
+        
+        # Add link density metric (links per 100 words)
+        word_count = metadata.get('word_count', 0)
+        if word_count > 0:
+            metadata['link_density'] = (link_stats['total_outgoing_links'] / word_count) * 100

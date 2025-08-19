@@ -27,6 +27,7 @@ MANIFEST
 
 # Unit test / coverage reports
 htmlcov/
+coverage/
 .tox/
 .nox/
 .coverage
@@ -98,3 +99,29 @@ pids
 .tmp/
 tmp/
 temp/
+
+# Debug and development artifacts
+*.png
+debug-*.js
+qa-*.js
+comprehensive-*.js
+final-*.js
+step*-*.js
+step*-*.png
+fixed-*.png
+detailed-*.png
+navigation-*.js
+navigation-*.png
+dom-*.js
+dom-*.png
+page-*.js
+page-*.png
+*test*.js
+*debug*.js
+*verification*.js
+*diagnostic*.js
+
+# Development directories
+file_change_state/
+performance_data/
+.ai/

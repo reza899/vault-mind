@@ -4,14 +4,11 @@ Provides live progress tracking for indexing operations and system events.
 """
 import json
 import logging
-import asyncio
 from typing import Dict, Any, Set
 from datetime import datetime
 
 from fastapi import WebSocket, WebSocketDisconnect
-import websockets
 
-from services.vault_service import VaultService
 from api.dependencies import get_vault_service
 
 logger = logging.getLogger(__name__)
@@ -313,7 +310,7 @@ async def websocket_endpoint(websocket: WebSocket):
         try:
             vault_service = get_vault_service()
             vault_service.remove_progress_callback(progress_handler.handle_progress_event)
-        except:
+        except Exception:
             pass  # Service might not be available during shutdown
 
 
