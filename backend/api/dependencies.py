@@ -14,6 +14,7 @@ vault_db: VaultDatabase = None
 embedding_service: EmbeddingService = None
 chroma_provider: ChromaDBProvider = None
 collection_manager: CollectionManager = None
+vault_service: VaultService = None
 
 
 def get_database() -> VaultDatabase:
@@ -37,10 +38,13 @@ def get_embedding_service() -> EmbeddingService:
 
 
 def get_vault_service() -> VaultService:
-    """Get vault service instance with dependencies."""
-    database = get_database()
-    embedder = get_embedding_service()
-    return VaultService(database, embedder)
+    """Get the global vault service instance."""
+    if vault_service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vault service not initialized",
+        )
+    return vault_service
 
 
 def get_chroma_provider() -> ChromaDBProvider:
@@ -68,10 +72,12 @@ def set_global_dependencies(
     embedder: EmbeddingService,
     chroma: ChromaDBProvider = None,
     col_manager: CollectionManager = None,
+    vault_svc: VaultService = None,
 ):
     """Set global service instances (called from app.py lifespan)."""
-    global vault_db, embedding_service, chroma_provider, collection_manager
+    global vault_db, embedding_service, chroma_provider, collection_manager, vault_service
     vault_db = db
     embedding_service = embedder
     chroma_provider = chroma
     collection_manager = col_manager
+    vault_service = vault_svc

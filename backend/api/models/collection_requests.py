@@ -11,7 +11,6 @@ from enum import Enum
 class ReindexMode(str, Enum):
     """Re-indexing mode options."""
     FULL = "full"
-    INCREMENTAL = "incremental"
 
 
 class CreateCollectionRequest(BaseModel):
@@ -132,8 +131,8 @@ class ReindexCollectionRequest(BaseModel):
     """Request model for re-indexing a collection."""
     
     mode: ReindexMode = Field(
-        ReindexMode.INCREMENTAL,
-        description="Re-indexing mode: 'full' (complete re-index) or 'incremental' (only changed files)"
+        ReindexMode.FULL,
+        description="Re-indexing mode: 'full' (complete re-index)"
     )
     force: bool = Field(
         False,
@@ -143,7 +142,7 @@ class ReindexCollectionRequest(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "mode": "incremental",
+                "mode": "full",
                 "force": False
             }
         }
@@ -375,7 +374,7 @@ class CollectionScheduleRequest(BaseModel):
                 "enabled": True,
                 "operation": "reindex",
                 "parameters": {
-                    "mode": "incremental"
+                    "mode": "full"
                 }
             }
         }

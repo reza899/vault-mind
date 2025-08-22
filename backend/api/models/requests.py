@@ -4,7 +4,6 @@ Defines input validation for all API endpoints.
 """
 from typing import Optional
 from pydantic import BaseModel, Field, validator
-from pathlib import Path
 
 
 class IndexVaultRequest(BaseModel):
@@ -50,24 +49,15 @@ class IndexVaultRequest(BaseModel):
     @validator('vault_path')
     def validate_vault_path(cls, v):
         """Validate vault path exists and is accessible."""
-        try:
-            path = Path(v).resolve()
-            if not path.exists():
-                raise ValueError(f'Vault path does not exist: {v}')
-            if not path.is_dir():
-                raise ValueError(f'Vault path is not a directory: {v}')
-            
-            # Check for basic accessibility
-            test_files = list(path.glob('*.md'))
-            if not test_files and not any(path.rglob('*.md')):
-                raise ValueError(f'No markdown files found in vault: {v}')
-                
-        except Exception as e:
-            if isinstance(e, ValueError):
-                raise
-            raise ValueError(f'Invalid vault path: {v} - {str(e)}')
+        from services.vault_path_handler import VaultPathHandler
         
-        return str(path)
+        handler = VaultPathHandler()
+        is_valid, error_message = handler.validate_vault_path(v)
+        
+        if not is_valid:
+            raise ValueError(error_message)
+        
+        return v
     
     @validator('schedule')
     def validate_schedule(cls, v):
@@ -104,7 +94,7 @@ class SearchVaultRequest(BaseModel):
         description="Maximum number of results to return"
     )
     similarity_threshold: float = Field(
-        default=0.7,
+        default=0.4,
         ge=0.0,
         le=1.0,
         description="Minimum similarity score for results (0.0-1.0)"

@@ -486,7 +486,7 @@ class VaultMindApiClient implements ApiClient {
 
   async deleteCollection(collectionName: string, confirmationToken: string): Promise<APIResponse<{ status: string; cleanup_job_id: string }>> {
     const response = await this.delete<APIResponse<{ status: string; cleanup_job_id: string }>>(`/collections/${collectionName}`, {
-      data: { confirmation_token: confirmationToken }
+      params: { confirmation_token: confirmationToken }
     });
     return response.data;
   }
@@ -496,7 +496,7 @@ class VaultMindApiClient implements ApiClient {
     return response.data;
   }
 
-  async reindexCollection(collectionName: string, mode: string = 'incremental'): Promise<APIResponse<{ job_id: string; status: string }>> {
+  async reindexCollection(collectionName: string, mode: string = 'full'): Promise<APIResponse<{ job_id: string; status: string }>> {
     const response = await this.post<APIResponse<{ job_id: string; status: string }>>(`/collections/${collectionName}/reindex`, {
       mode,
       force: false

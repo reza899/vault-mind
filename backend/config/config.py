@@ -20,7 +20,7 @@ class Config:
     """Unified configuration with environment defaults."""
     # Embedding settings
     embedding_provider: EmbeddingProvider = EmbeddingProvider.CHROMADB
-    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_model: str = "all-mpnet-base-v2"
     batch_size: int = 100
     
     # API settings
@@ -41,6 +41,9 @@ class Config:
     environment: str = "development"
     log_level: str = "INFO"
     
+    # CORS settings
+    cors_origins: Optional[str] = None
+    
     def __post_init__(self):
         """Load from environment variables."""
         # Embedding settings
@@ -59,6 +62,9 @@ class Config:
         self.port = int(os.getenv('PORT', str(self.port)))
         self.environment = os.getenv('ENVIRONMENT', self.environment)
         self.log_level = os.getenv('LOG_LEVEL', self.log_level)
+        
+        # CORS settings
+        self.cors_origins = os.getenv('CORS_ORIGINS', self.cors_origins)
 
 
 # Global config instance

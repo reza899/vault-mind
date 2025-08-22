@@ -27,7 +27,7 @@ async def search_vault(
     vault_name: str = Query(..., description="Name of the vault to search"),
     query: str = Query(..., min_length=1, max_length=1000, description="Search query text"),
     limit: int = Query(default=10, ge=1, le=100, description="Maximum number of results"),
-    similarity_threshold: float = Query(default=0.7, ge=0.0, le=1.0, description="Minimum similarity score"),
+    similarity_threshold: float = Query(default=0.4, ge=0.0, le=1.0, description="Minimum similarity score"),
     include_context: bool = Query(default=True, description="Include surrounding context in results"),
     include_tags: str = Query(default=None, description="Comma-separated list of tags to include"),
     exclude_tags: str = Query(default=None, description="Comma-separated list of tags to exclude")
@@ -42,7 +42,7 @@ async def search_vault(
     - `vault_name`: Name of the vault to search (must be already indexed)
     - `query`: Search query text (1-1000 characters)
     - `limit`: Maximum number of results to return (1-100, default: 10)
-    - `similarity_threshold`: Minimum similarity score for results (0.0-1.0, default: 0.7)
+    - `similarity_threshold`: Minimum similarity score for results (0.0-1.0, default: 0.4)
     - `include_context`: Include surrounding text context in results (default: true)
     
     **Response:**
@@ -182,7 +182,7 @@ async def search_vault_with_body(
     - `vault_name`: Name of the vault to search
     - `query`: Search query text
     - `limit`: Maximum number of results (default: 10)
-    - `similarity_threshold`: Minimum similarity score (default: 0.7)
+    - `similarity_threshold`: Minimum similarity score (default: 0.4)
     - `include_context`: Include surrounding context (default: true)
     - `filter_metadata`: Optional metadata filters
     
