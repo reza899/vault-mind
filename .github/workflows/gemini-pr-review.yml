@@ -210,7 +210,7 @@ jobs:
                 "run_shell_command(grep)"
               ],
               "telemetry": {
-                "enabled": false,
+                "enabled": true,
                 "target": "gcp"
               }
             }
