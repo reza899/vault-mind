@@ -352,7 +352,7 @@ async def reindex_collection(
     - `collection_name`: Collection to re-index
     
     **Request Body:**
-    - `mode`: 'full' or 'incremental' (default: incremental)
+    - `mode`: 'full' (default: full)
     - `force`: Force re-indexing even if already running
     
     **Response:**
@@ -676,7 +676,7 @@ async def search_collection(
     - `query`: Search query text
     - `filters`: Optional filters (tags, dates, folders)
     - `limit`: Number of results (default: 10, max: 100)
-    - `similarity_threshold`: Minimum similarity score (default: 0.7)
+    - `similarity_threshold`: Minimum similarity score (default: 0.4)
     
     **Response:**
     - Enhanced search results with collection isolation

@@ -119,6 +119,72 @@ class CollectionManager:
             self._started = False
             logger.info("Collection manager service stopped")
 
+    async def _register_vault_collection(
+        self,
+        collection_name: str,
+        vault_path: str,
+        description: Optional[str] = None,
+        document_count: int = 0,
+        status: str = "indexed"
+    ) -> None:
+        """
+        Register a vault collection in the metadata database.
+        
+        This method is called by VaultService after successful indexing
+        to make the collection visible in the collections API.
+        
+        Args:
+            collection_name: Name of the collection
+            vault_path: Path to the vault
+            description: Optional description
+            document_count: Number of documents indexed
+            status: Collection status
+        """
+        try:
+            with sqlite3.connect(self.metadata_db_path) as conn:
+                # Check if collection already exists
+                existing = conn.execute(
+                    "SELECT name FROM collections WHERE name = ?",
+                    (collection_name,)
+                ).fetchone()
+                
+                if existing:
+                    # Calculate size for existing collection
+                    calculated_size = await self._calculate_collection_size(collection_name, document_count)
+                    
+                    # Update existing collection
+                    conn.execute("""
+                        UPDATE collections SET
+                            vault_path = ?,
+                            description = ?,
+                            updated_at = CURRENT_TIMESTAMP,
+                            last_indexed_at = CURRENT_TIMESTAMP,
+                            document_count = ?,
+                            status = ?,
+                            health_status = 'healthy',
+                            size_bytes = ?
+                        WHERE name = ?
+                    """, (vault_path, description, document_count, status, calculated_size, collection_name))
+                    logger.info(f"Updated existing collection '{collection_name}' in metadata with size {calculated_size} bytes")
+                else:
+                    # Calculate size for new collection
+                    calculated_size = await self._calculate_collection_size(collection_name, document_count)
+                    
+                    # Insert new collection
+                    conn.execute("""
+                        INSERT INTO collections (
+                            name, vault_path, description, document_count, 
+                            status, health_status, last_indexed_at, size_bytes
+                        ) VALUES (?, ?, ?, ?, ?, 'healthy', CURRENT_TIMESTAMP, ?)
+                    """, (collection_name, vault_path, description, document_count, status, calculated_size))
+                    logger.info(f"Registered new collection '{collection_name}' in metadata with size {calculated_size} bytes")
+                
+                conn.commit()
+                
+        except Exception as e:
+            logger.error(f"Failed to register collection '{collection_name}': {e}")
+            raise
+
     async def list_collections(self, page: int = 1, limit: int = 50) -> Dict[str, Any]:
         """
         List all collections with metadata and pagination.
@@ -630,7 +696,7 @@ class CollectionManager:
         query: str,
         filters: Optional[Dict] = None,
         limit: int = 10,
-        similarity_threshold: float = 0.7
+        similarity_threshold: float = 0.4
     ) -> Dict[str, Any]:
         """Search within a collection."""
         if not await self._collection_exists(collection_name):

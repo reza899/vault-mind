@@ -176,7 +176,7 @@ export const sortSearchResults = (
         return 0;
     }
 
-    return sortOrder === 'asc' ? comparison : -comparison;
+    return sortOrder === 'desc' ? comparison : -comparison;
   });
 
   return sorted;

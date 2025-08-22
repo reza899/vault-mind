@@ -2,7 +2,6 @@
 fastapi==0.116.1
 uvicorn[standard]==0.35.0
 pydantic==2.11.7
-python-dotenv==1.1.1
 
 # Markdown and frontmatter processing
 python-frontmatter==1.1.0
@@ -15,12 +14,6 @@ sentence-transformers==5.1.0
 
 # System monitoring
 psutil==6.0.0
-
-# File system watching (optional)
-watchdog==6.0.0
-
-# Graph processing (used by LinkGraphManager)  
-networkx==3.2.1
 
 # WebSocket support (used by WebSocketState)
 websockets==15.0.1

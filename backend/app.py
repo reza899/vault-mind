@@ -17,7 +17,7 @@ from config import config
 from database import VaultDatabase, EmbeddingService
 from database.providers.chromadb import ChromaDBProvider
 from services.collection_manager import CollectionManager
-from api.routes import indexing, search, collections, collections_ws, links, file_changes, incremental, performance
+from api.routes import indexing, search, collections, collections_ws
 from api.routes import status as status_routes
 from api.dependencies import set_global_dependencies
 from api.websocket import websocket_endpoint
@@ -36,8 +36,6 @@ vault_db: Optional[VaultDatabase] = None
 embedding_service: Optional[EmbeddingService] = None
 chroma_provider: Optional[ChromaDBProvider] = None
 collection_manager: Optional[CollectionManager] = None
-file_change_service = None
-performance_monitor = None
 
 
 @asynccontextmanager
@@ -46,7 +44,7 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Vault Mind API server...")
     
-    global vault_db, embedding_service, chroma_provider, collection_manager, file_change_service, performance_monitor
+    global vault_db, embedding_service, chroma_provider, collection_manager
     
     try:
         # Initialize database connection
@@ -64,29 +62,21 @@ async def lifespan(app: FastAPI):
         await embedding_service.initialize()
         logger.info("EmbeddingService initialized successfully")
         
-        # Initialize collection manager
+        # Initialize vault service and collection manager
         from services.vault_service import VaultService
-        vault_service = VaultService(vault_db, embedding_service)
-        collection_manager = CollectionManager(chroma_provider, vault_service)
-        logger.info("Collection manager initialized successfully")
+        collection_manager = CollectionManager(chroma_provider, None)  # Vault service will be set later
+        vault_service = VaultService(vault_db, embedding_service, collection_manager)
+        
+        # CRITICAL FIX: Set vault service reference in collection manager for reindex operations
+        collection_manager.vault_service = vault_service
+        logger.info("Vault service and collection manager initialized successfully")
         
         # Set global dependencies for FastAPI dependency injection
-        set_global_dependencies(vault_db, embedding_service, chroma_provider, collection_manager)
+        set_global_dependencies(vault_db, embedding_service, chroma_provider, collection_manager, vault_service)
         
         # Start collection manager service
         await collection_manager.start()
         
-        # Initialize and start file change service
-        from services.file_change_service import get_file_change_service
-        file_change_service = get_file_change_service()
-        await file_change_service.start()
-        logger.info("File change service started successfully")
-        
-        # Initialize and start performance monitor
-        from services.performance_monitor import get_performance_monitor
-        performance_monitor = get_performance_monitor()
-        await performance_monitor.start()
-        logger.info("Performance monitor started successfully")
         
         # Health check (disabled temporarily for VMIND-031 testing)
         db_health = await vault_db.health_check()
@@ -108,13 +98,6 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Vault Mind API server...")
     
     try:
-        if performance_monitor:
-            await performance_monitor.stop()
-            logger.info("Performance monitor stopped")
-        
-        if file_change_service:
-            await file_change_service.stop()
-            logger.info("File change service stopped")
         
         if collection_manager:
             await collection_manager.stop()
@@ -146,12 +129,64 @@ app = FastAPI(
 )
 
 # Add CORS middleware for frontend integration
+def get_cors_origins():
+    """Get CORS origins based on environment configuration."""
+    # Base development origins
+    origins = [
+        "http://localhost:3000",      # React dev server default
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",      # Vite dev server default
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",      # Vite alternative port
+        "http://127.0.0.1:5174",
+        "http://localhost:5175",      # Vite alternative port
+        "http://127.0.0.1:5175",
+        "http://localhost:8080",      # Vue dev server default
+        "http://127.0.0.1:8080",
+    ]
+    
+    # Add Docker container origins (for docker-compose)
+    origins.extend([
+        "http://frontend:5173",       # Docker service name
+        "http://backend:8000",        # Docker service name
+    ])
+    
+    # Add production/staging origins from environment
+    if hasattr(config, 'cors_origins') and config.cors_origins:
+        # If CORS_ORIGINS environment variable is set, use it
+        env_origins = config.cors_origins.split(',')
+        origins.extend([origin.strip() for origin in env_origins])
+    
+    # Add common staging/production patterns
+    staging_production_origins = [
+        "https://vault-mind.vercel.app",     # Vercel deployment
+        "https://vaultmind.app",             # Production domain
+        "https://app.vaultmind.com",         # Alternative production
+        "https://staging.vaultmind.app",     # Staging environment
+        "https://dev.vaultmind.app",         # Development environment
+        "http://vault-mind-frontend:5173",   # Kubernetes pod
+        "http://vault-mind-backend:8000",    # Kubernetes pod
+    ]
+    origins.extend(staging_production_origins)
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_origins = []
+    for origin in origins:
+        if origin not in seen:
+            seen.add(origin)
+            unique_origins.append(origin)
+    
+    logger.info(f"CORS configured for {len(unique_origins)} origins: {unique_origins}")
+    return unique_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5175", "http://127.0.0.1:5175"],  # Frontend dev server
+    allow_origins=get_cors_origins(),
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["X-Correlation-ID"],
 )
 
 
@@ -161,10 +196,6 @@ app.include_router(search.router, prefix="/api")
 app.include_router(status_routes.router, prefix="/api")
 app.include_router(collections.router, prefix="/api")
 app.include_router(collections_ws.router, prefix="/api")
-app.include_router(links.router)
-app.include_router(file_changes.router)
-app.include_router(incremental.router)
-app.include_router(performance.router)
 
 # Add WebSocket endpoint
 @app.websocket("/ws")
@@ -339,10 +370,6 @@ async def root(request: Request) -> Dict[str, Any]:
                 "indexing": "/index (POST)",
                 "search": "/search (GET)",
                 "status": "/status (GET)",
-                "links": "/api/v1/links/* (GET)",
-                "file_changes": "/api/v1/file-changes/* (GET/POST/PUT/DELETE)",
-                "incremental": "/api/v1/incremental/* (GET/POST/DELETE)",
-                "performance": "/api/v1/performance/* (GET/POST/PUT)",
                 "websocket": "/ws"
             }
         },

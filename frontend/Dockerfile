@@ -1,6 +1,9 @@
 # Development Dockerfile for Vault Mind Frontend
 FROM node:22-alpine
 
+# Install curl for health checks
+RUN apk add --no-cache curl
+
 WORKDIR /app
 
 # Install dependencies

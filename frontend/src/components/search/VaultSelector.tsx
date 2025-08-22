@@ -20,11 +20,19 @@ export const VaultSelector: React.FC<VaultSelectorProps> = ({
   const [{ collections }] = useVaultStatus({ refreshInterval: 30000, enabled: true });
 
   // Convert collections to vault config format for compatibility
-  const collectionsAsConfigs = collections.map(collection => ({
-    vault_name: collection.collection_name,
-    vault_path: collection.vault_path,
-    description: collection.description,
-  }));
+  const collectionsAsConfigs = collections.map(collection => {
+    // Extract actual vault name by removing 'vault_' prefix
+    const actualVaultName = collection.collection_name.startsWith('vault_') 
+      ? collection.collection_name.substring(6)  // Remove 'vault_' prefix
+      : collection.collection_name;
+    
+    return {
+      vault_name: actualVaultName,
+      collection_name: collection.collection_name, // Keep original for reference
+      vault_path: collection.vault_path,
+      description: collection.description,
+    };
+  });
 
   // Combine recent configs with actual collections, prioritizing actual collections
   const collectionNames = new Set(collections.map(c => c.collection_name));

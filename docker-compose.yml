@@ -6,9 +6,11 @@ services:
     environment:
       - CHROMA_PERSIST_DIR=/app/chroma_db
       - PYTHONPATH=/app
+      - HOST_MOUNT_PREFIX=/host
     volumes:
       - ./backend:/app
       - backend_chroma_data:/app/chroma_db
+      - /:/host:ro
     command: uvicorn app:app --host 0.0.0.0 --port 8000 --reload
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -29,10 +31,11 @@ services:
     depends_on:
       - backend
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5173"]
+      test: ["CMD-SHELL", "curl -s http://localhost:5173 > /dev/null || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 10s
 
 volumes:
   backend_chroma_data:

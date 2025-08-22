@@ -27,6 +27,7 @@
     "postcss": "^8.5.6",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "react-router-dom": "^7.8.1",
     "tailwindcss": "^3.4.17",
     "zustand": "^5.0.7"
   },
@@ -50,6 +51,7 @@
     "globals": "^16.3.0",
     "jsdom": "^25.0.1",
     "prettier": "^3.6.2",
+    "ts-unused-exports": "^11.0.1",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.39.1",
     "vite": "^7.1.2",

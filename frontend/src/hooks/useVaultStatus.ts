@@ -77,7 +77,7 @@ export const useVaultStatus = (options: UseVaultStatusOptions = {}): [VaultStatu
 
   const reindexVault = useCallback(async (collectionName: string) => {
     try {
-      const response = await apiClient.reindexCollection(collectionName, 'incremental');
+      const response = await apiClient.reindexCollection(collectionName, 'full');
       
       if (response.status === 'success') {
         // Update the specific collection's status to indexing
@@ -141,7 +141,7 @@ export const useVaultStatus = (options: UseVaultStatusOptions = {}): [VaultStatu
     try {
       const response = await apiClient.getDeleteConfirmation(collectionName);
       
-      if (response.status === 'success') {
+      if (response.status === 'success' || response.status === 'confirmation_required') {
         return response.data;
       } else {
         throw new Error(response.message || 'Failed to get delete confirmation');

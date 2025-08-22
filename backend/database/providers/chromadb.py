@@ -39,7 +39,11 @@ class ChromaDBProvider:
     
     def __init__(self, model_name: str = "all-MiniLM-L6-v2", shared_client=None):
         self.model_name = model_name
-        self.dimension = 384  # Default ChromaDB dimension for all-MiniLM-L6-v2
+        # Set dimension based on model
+        if "mpnet" in model_name.lower():
+            self.dimension = 768  # all-mpnet-base-v2
+        else:
+            self.dimension = 384  # all-MiniLM-L6-v2
         self.initialized = False
         self.client = shared_client  # Use shared client if provided
         self.settings = config
@@ -75,14 +79,26 @@ class ChromaDBProvider:
     
     async def encode_texts(self, texts: List[str]) -> List[List[float]]:
         """
-        Return placeholder embeddings.
-        ChromaDB handles real embeddings when documents are added to collections.
+        Generate real embeddings using sentence-transformers.
         """
         if not self.initialized:
             await self.initialize()
         
-        # Return placeholder embeddings - ChromaDB will handle real ones
-        return [[0.0] * self.dimension for _ in texts]
+        try:
+            from sentence_transformers import SentenceTransformer
+            
+            # Initialize model
+            if not hasattr(self, '_model'):
+                self._model = SentenceTransformer(self.model_name)
+            
+            # Generate embeddings
+            embeddings = self._model.encode(texts)
+            return embeddings.tolist()
+            
+        except Exception as e:
+            logger.error(f"Failed to generate embeddings: {e}", exc_info=True)
+            # Fallback to zeros if embedding fails
+            return [[0.0] * self.dimension for _ in texts]
     
     def get_dimension(self) -> int:
         """Get embedding dimension."""

@@ -155,11 +155,22 @@ class VaultDatabase:
             metadata["description"] = description
         
         try:
+            # Import embedding function
+            from chromadb.utils import embedding_functions
+            from config.config import config
+            
+            # Create embedding function with the configured model
+            embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name=config.embedding_model
+            )
+            
             collection = self._client.create_collection(
                 name=collection_name,
-                metadata=metadata
+                metadata=metadata,
+                embedding_function=embedding_function
+                # Note: ChromaDB defaults to cosine similarity for sentence-transformers models
             )
-            logger.info(f"Created vault collection '{collection_name}' for vault '{vault_name}'")
+            logger.info(f"Created vault collection '{collection_name}' for vault '{vault_name}' with model '{config.embedding_model}'")
             return collection
             
         except Exception as e:
