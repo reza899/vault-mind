@@ -153,8 +153,8 @@ jobs:
 
       - name: 'Rate Limit Protection'
         run: |
-          echo "Waiting 60 seconds to respect Gemini API free tier rate limits (2 requests/minute)..."
-          sleep 60
+          echo "Waiting 90 seconds to respect Gemini API free tier rate limits (2 requests/minute)..."
+          sleep 90
 
       - name: 'Run Gemini PR Review'
         uses: 'google-github-actions/run-gemini-cli@v0'
@@ -179,6 +179,7 @@ jobs:
             {
               "debug": true,
               "maxSessionTurns": 20,
+              "maxRetries": 0,
               "mcpServers": {
                 "github": {
                   "command": "docker",
