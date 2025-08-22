@@ -151,6 +151,11 @@ jobs:
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
 
+      - name: 'Rate Limit Protection'
+        run: |
+          echo "Waiting 90 seconds to respect Gemini API free tier rate limits (2 requests/minute)..."
+          sleep 90
+
       - name: 'Run Gemini PR Review'
         uses: 'google-github-actions/run-gemini-cli@v0'
         id: 'gemini_pr_review'
@@ -172,8 +177,9 @@ jobs:
           use_gemini_code_assist: '${{ vars.GOOGLE_GENAI_USE_GCA }}'
           settings: |-
             {
-              "debug": ${{ fromJSON(env.DEBUG || env.ACTIONS_STEP_DEBUG || false) }},
+              "debug": true,
               "maxSessionTurns": 20,
+              "maxRetries": 0,
               "mcpServers": {
                 "github": {
                   "command": "docker",
@@ -205,7 +211,7 @@ jobs:
                 "run_shell_command(grep)"
               ],
               "telemetry": {
-                "enabled": false,
+                "enabled": true,
                 "target": "gcp"
               }
             }
